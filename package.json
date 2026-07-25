@@ -6,6 +6,8 @@
   "author": "",
   "license": "MIT",
   "private": true,
+  "//repository": "TODO: replace SET-YOUR-GITHUB-USERNAME below with your GitHub account. It is where electron-updater looks for new versions and where the download page points; until it is real, auto-update finds nothing. See the Releasing section of the README.",
+  "repository": "github:SET-YOUR-GITHUB-USERNAME/whisper-uz",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:mock": "node scripts/dev.mjs --mock",

@@ -79,9 +79,10 @@ function openApp(tab: AppTab): void {
 
   appWin = new BrowserWindow({
     width: 720,
-    // Tall enough that the three welcome steps fit without scrolling — that flow is the
-    // first thing a new user sees, and a hidden step 3 is a step nobody does.
-    height: 660,
+    // Tall enough that the three welcome steps and the whole settings form fit without
+    // scrolling. The welcome flow is the first thing a new user sees, and a step below the
+    // fold is a step nobody does.
+    height: 700,
     minWidth: 560,
     minHeight: 420,
     title: 'Whisper UZ',

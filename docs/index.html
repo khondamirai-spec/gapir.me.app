@@ -355,10 +355,14 @@
         var link = document.getElementById('repo-link');
 
         if (!user) {
-          // Opened from disk or a custom domain — send people to the releases page instead of
-          // guessing an owner and handing them a 404.
-          button.textContent = 'GitHub Releases’dan yuklab oling';
-          button.href = 'https://github.com/search?q=whisper-uz&type=repositories';
+          // Opened from disk, or served from a custom domain. Guessing an owner here would
+          // hand people a 404, so say what's actually going on instead.
+          button.textContent = 'Yuklab olish havolasi hozir mavjud emas';
+          button.removeAttribute('href');
+          button.style.background = '#2a2a31';
+          button.style.cursor = 'default';
+          link.textContent =
+            'Bu sahifa GitHub Pages orqali ochilganda yuklab olish havolasi o‘zi paydo bo‘ladi.';
           return;
         }
 
