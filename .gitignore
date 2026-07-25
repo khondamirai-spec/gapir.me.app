@@ -1,0 +1,18 @@
+node_modules/
+out/
+dist/
+release/
+
+# Secrets — never commit
+.env
+.env.local
+
+# Spike artifacts
+*.pcm
+*.wav
+
+# Fetched at build time by scripts/fetch-ffmpeg.mjs — 100 MB has no business in git history
+resources/ffmpeg.exe
+resources/ffmpeg-LICENSE.txt
+resources/.ffmpeg-download.zip
+resources/.ffmpeg-extract/

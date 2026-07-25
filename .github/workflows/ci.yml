@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    # windows-latest, not ubuntu: uiohook-napi and @nut-tree-fork ship platform-specific
+    # binaries, and the modules under test import them.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # Catches renderer and main build breakage without paying for the 150 MB installer.
+      # ffmpeg is deliberately not fetched here — nothing in the build needs it.
+      - name: Build
+        run: npx electron-vite build

@@ -1,0 +1,40 @@
+{
+  "name": "whisper-uz",
+  "version": "0.2.0",
+  "description": "Uzbek push-to-talk dictation — hold a hotkey, speak, get text in any app",
+  "main": "./out/main/index.js",
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:mock": "node scripts/dev.mjs --mock",
+    "build": "tsc --noEmit && electron-vite build",
+    "start": "electron-vite preview",
+    "ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "predist": "npm run ffmpeg",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "prerelease": "npm run ffmpeg",
+    "release": "npm run build && electron-builder --win --publish always",
+    "spike": "node --env-file=.env scripts/spike-aisha-realtime.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.9",
+    "uiohook-napi": "^1.5.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
+}

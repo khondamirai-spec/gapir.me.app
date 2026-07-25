@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Whisper UZ — o‘zbekcha gapirib yozing</title>
+    <meta
+      name="description"
+      content="Ctrl+Caps Lock ni bosib turib gapiring — aytganingiz kursor turgan joyga matn bo‘lib yoziladi. Windows uchun bepul, ochiq kodli."
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #131317;
+        --panel: #1c1c22;
+        --line: #2b2b34;
+        --text: #ececee;
+        --muted: #9a9aa3;
+        --faint: #6e6e78;
+        --accent: #7c6bd6;
+        --accent-hi: #8b7cf0;
+        --warn: #fbbf24;
+      }
+
+      body {
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+
+      /* ---------- hero ---------- */
+      header {
+        padding: 72px 0 56px;
+        text-align: center;
+      }
+
+      .mark {
+        width: 60px;
+        height: 60px;
+        margin: 0 auto 22px;
+        border-radius: 16px;
+        background: linear-gradient(#6d5ccf, #7c6bd6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+      }
+
+      .mark svg {
+        width: 34px;
+        height: 34px;
+      }
+
+      h1 {
+        font-size: 34px;
+        line-height: 1.2;
+        letter-spacing: -0.5px;
+        margin-bottom: 14px;
+      }
+
+      .tagline {
+        font-size: 17px;
+        color: var(--muted);
+        max-width: 520px;
+        margin: 0 auto 32px;
+      }
+
+      .kbd {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: #2a2a31;
+        border: 1px solid #3a3a44;
+        font-size: 0.88em;
+        color: #dcdce0;
+        white-space: nowrap;
+      }
+
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 26px;
+        border-radius: 11px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .cta:hover {
+        background: var(--accent-hi);
+      }
+
+      .cta-note {
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--faint);
+      }
+
+      /* ---------- sections ---------- */
+      section {
+        padding: 40px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      h2 {
+        font-size: 19px;
+        margin-bottom: 18px;
+      }
+
+      .steps {
+        list-style: none;
+        counter-reset: step;
+      }
+
+      .steps li {
+        counter-increment: step;
+        position: relative;
+        padding-left: 40px;
+        margin-bottom: 20px;
+      }
+
+      .steps li::before {
+        content: counter(step);
+        position: absolute;
+        left: 0;
+        top: 2px;
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .steps strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .steps span {
+        color: var(--muted);
+        font-size: 14.5px;
+      }
+
+      .callout {
+        padding: 16px 18px;
+        border-radius: 10px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--warn);
+        font-size: 14.5px;
+        color: var(--muted);
+      }
+
+      .callout strong {
+        color: var(--text);
+      }
+
+      .callout ol {
+        margin: 10px 0 0 20px;
+      }
+
+      .callout li {
+        margin-bottom: 4px;
+      }
+
+      dl {
+        font-size: 14.5px;
+      }
+
+      dt {
+        font-weight: 600;
+        margin-top: 14px;
+      }
+
+      dd {
+        color: var(--muted);
+        margin-left: 0;
+      }
+
+      a {
+        color: var(--accent-hi);
+      }
+
+      footer {
+        padding: 36px 0 56px;
+        border-top: 1px solid var(--line);
+        font-size: 13px;
+        color: var(--faint);
+        text-align: center;
+      }
+
+      @media (max-width: 560px) {
+        h1 {
+          font-size: 27px;
+        }
+        header {
+          padding: 48px 0 40px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="wrap">
+      <div class="mark">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="9.5" y="4.7" width="5" height="9.3" rx="2.5" fill="currentColor" />
+          <path
+            d="M7.2 11.5a4.8 4.8 0 0 0 9.6 0"
+            stroke="currentColor"
+            stroke-width="1.35"
+            stroke-linecap="round"
+          />
+          <path d="M12 16.3v2.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          <path d="M9.5 19h5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
+        </svg>
+      </div>
+
+      <h1>Yozmang — gapiring</h1>
+      <p class="tagline">
+        <span class="kbd">Ctrl</span> + <span class="kbd">Caps Lock</span> ni bosib turib
+        gapiring. Qo‘yib yuborganingizda aytganingiz kursor turgan joyga matn bo‘lib yoziladi —
+        Telegram, Word, brauzer, xohlagan dasturda.
+      </p>
+
+      <a class="cta" id="download" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        Windows uchun yuklab olish
+      </a>
+      <p class="cta-note">
+        Windows 10 / 11, 64-bit · bepul va ochiq kodli · macOS versiyasi keyinroq
+      </p>
+    </header>
+
+    <section class="wrap">
+      <h2>O‘rnatgandan keyin</h2>
+      <ol class="steps">
+        <li>
+          <strong>Aisha API kalitini oling</strong>
+          <span>
+            Nutqni matnga o‘girish <a href="https://aisha.group">aisha.group</a> orqali ishlaydi
+            — o‘zbek tiliga o‘rgatilgan yagona xizmat. Ro‘yxatdan o‘tib kalitni olasiz. To‘lov
+            ishlatganingizcha: daqiqasi ~425 so‘m, oylik to‘lov yo‘q.
+          </span>
+        </li>
+        <li>
+          <strong>Kalitni dasturga qo‘yib qo‘ying</strong>
+          <span>
+            Dastur birinchi ochilganda o‘zi so‘raydi. “Tekshirish” tugmasi kalit ishlashini
+            darhol aytadi. Kalit shu kompyuterda shifrlangan holda saqlanadi va boshqa hech
+            qayerga yuborilmaydi.
+          </span>
+        </li>
+        <li>
+          <strong>Gapirib ko‘ring</strong>
+          <span>
+            Ekran pastida kichkina belgi paydo bo‘ladi — dastur ishlayotgani shundan bilinadi.
+            <span class="kbd">Ctrl</span> + <span class="kbd">Caps Lock</span> ni bosib turib
+            gapirsangiz, belgi kengayib ovozingizni ko‘rsatadi. Bekor qilish uchun
+            <span class="kbd">Esc</span>.
+          </span>
+        </li>
+      </ol>
+    </section>
+
+    <section class="wrap">
+      <h2>“Windows protected your PC” chiqsa</h2>
+      <div class="callout">
+        <strong>Bu normal holat — dastur hali imzolanmagan.</strong>
+        Sertifikat pullik bo‘lgani uchun hozircha yo‘q, shuning uchun Windows notanish
+        dasturdan ogohlantiradi. Ochish uchun:
+        <ol>
+          <li><strong>More info</strong> ni bosing</li>
+          <li><strong>Run anyway</strong> ni bosing</li>
+        </ol>
+        Antivirus ham shikoyat qilishi mumkin: dastur klaviaturani tinglaydi va tugma
+        bosishini yuboradi — keylogger bilan bir xil ko‘rinadi. Kodning hammasi ochiq,
+        GitHub’da o‘qib ko‘rsangiz bo‘ladi.
+      </div>
+    </section>
+
+    <section class="wrap">
+      <h2>Savollar</h2>
+      <dl>
+        <dt>Ovozim qayerga ketadi?</dt>
+        <dd>
+          Faqat Aisha’ga, matnga o‘girish uchun. Ovoz hech qayerda saqlanmaydi. Aytgan
+          matnlaringiz esa kompyuteringizda tarixda qoladi — istagan payt o‘chirasiz yoki
+          butunlay yozib qo‘yishni o‘chirib tashlaysiz.
+        </dd>
+
+        <dt>Ruscha va inglizcha ham bo‘ladimi?</dt>
+        <dd>Ha, Sozlamalardan tilni almashtirasiz.</dd>
+
+        <dt>Internet kerakmi?</dt>
+        <dd>Ha. Matnga o‘girish serverda bo‘ladi, shuning uchun internetsiz ishlamaydi.</dd>
+
+        <dt>Aytilgan matnlarni qayerdan ko‘raman?</dt>
+        <dd>
+          Trey belgisini bosing — dastur oynasi ochiladi, hamma aytganlaringiz ro‘yxat bo‘lib
+          turadi. Bir bosishda nusxa olasiz.
+        </dd>
+
+        <dt>Yangilanish o‘zi keladimi?</dt>
+        <dd>Ha, dastur yangi versiyani o‘zi topib yuklaydi va keyingi ochilishda o‘rnatadi.</dd>
+      </dl>
+    </section>
+
+    <footer class="wrap">
+      <p id="repo-link"></p>
+      <p>MIT litsenziyasi · ffmpeg (LGPL) bilan birga keladi</p>
+    </footer>
+
+    <script>
+      /*
+       * The download URL is derived from where this page is served rather than hardcoded:
+       * on GitHub Pages the host is <user>.github.io and the first path segment is the repo,
+       * which is everything needed to point at the latest release asset. That way renaming or
+       * transferring the repo can't leave a dead download button behind.
+       */
+      (function () {
+        var host = location.hostname;
+        var user = host.endsWith('.github.io') ? host.slice(0, -'.github.io'.length) : null;
+        var repo = location.pathname.split('/').filter(Boolean)[0] || 'whisper-uz';
+
+        var button = document.getElementById('download');
+        var link = document.getElementById('repo-link');
+
+        if (!user) {
+          // Opened from disk or a custom domain — send people to the releases page instead of
+          // guessing an owner and handing them a 404.
+          button.textContent = 'GitHub Releases’dan yuklab oling';
+          button.href = 'https://github.com/search?q=whisper-uz&type=repositories';
+          return;
+        }
+
+        var base = 'https://github.com/' + user + '/' + repo;
+        button.href = base + '/releases/latest/download/Whisper-UZ-Setup.exe';
+        link.innerHTML = 'Kod va barcha versiyalar: <a href="' + base + '">' + base.replace('https://', '') + '</a>';
+      })();
+    </script>
+  </body>
+</html>

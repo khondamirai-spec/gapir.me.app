@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>Whisper UZ</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #17171b;
+        --panel: #1e1e24;
+        --field: #212127;
+        --line: #2e2e37;
+        --text: #e8e8ea;
+        --muted: #8b8b93;
+        --faint: #6b6b74;
+        --accent: #6d5ccf;
+        --accent-hi: #7c6bd6;
+        --ok: #4ade80;
+        --warn: #fbbf24;
+        --err: #f87171;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        display: flex;
+        flex-direction: column;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 14px;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+
+      /* ---------- Tab bar ---------- */
+      #tabs {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+        padding: 10px 16px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      #tabs button {
+        padding: 8px 14px 10px;
+        border: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 6px 6px 0 0;
+        background: none;
+        color: var(--muted);
+        font-family: inherit;
+        font-size: 13.5px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+
+      #tabs button:hover {
+        color: var(--text);
+      }
+
+      #tabs button.on {
+        color: var(--text);
+        border-bottom-color: var(--accent);
+      }
+
+      #tabs .spacer {
+        flex: 1;
+      }
+
+      #version {
+        font-size: 11.5px;
+        color: var(--faint);
+        padding-right: 4px;
+      }
+
+      /* ---------- Views ---------- */
+      main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .view {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      h2 {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 3px;
+      }
+
+      .sub {
+        font-size: 12.5px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 5px;
+        background: #2a2a31;
+        border: 1px solid #3a3a44;
+        font-size: 11.5px;
+        color: #d4d4d8;
+      }
+
+      /* ---------- History ---------- */
+      #historyBar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        padding: 12px 16px;
+      }
+
+      #search {
+        flex: 1;
+      }
+
+      #entries {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0 16px 16px;
+      }
+
+      .entry {
+        padding: 11px 13px;
+        margin-bottom: 8px;
+        border-radius: 10px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+      }
+
+      .entry-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .entry-when {
+        font-size: 11.5px;
+        color: var(--faint);
+      }
+
+      .chip {
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: #2a2a31;
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+
+      .entry-actions {
+        display: flex;
+        gap: 6px;
+        margin-left: auto;
+      }
+
+      .entry-text {
+        font-size: 13.5px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        cursor: pointer;
+      }
+
+      /* Long dictations are clamped until clicked — the list is for scanning. */
+      .entry-text.clamped {
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      #historyFoot {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+        padding: 10px 16px;
+        border-top: 1px solid var(--line);
+        font-size: 11.5px;
+        color: var(--faint);
+      }
+
+      #historyFoot .path {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .empty {
+        padding: 44px 20px;
+        text-align: center;
+        color: var(--faint);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      /* ---------- Settings / welcome forms ---------- */
+      .scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px 16px 24px;
+      }
+
+      .field {
+        margin-bottom: 18px;
+        max-width: 520px;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        font-weight: 500;
+        color: #a1a1aa;
+        margin-bottom: 6px;
+      }
+
+      input[type='password'],
+      input[type='text'],
+      textarea,
+      select {
+        width: 100%;
+        padding: 9px 11px;
+        border-radius: 8px;
+        background: var(--field);
+        border: 1px solid #34343d;
+        color: var(--text);
+        font-family: inherit;
+        font-size: 13.5px;
+        outline: none;
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 74px;
+        line-height: 1.5;
+      }
+
+      input:focus,
+      select:focus,
+      textarea:focus {
+        border-color: var(--accent-hi);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .row input[type='checkbox'] {
+        width: 15px;
+        height: 15px;
+        flex-shrink: 0;
+        accent-color: var(--accent);
+      }
+
+      .row label {
+        margin: 0;
+        color: var(--text);
+        font-weight: 400;
+        font-size: 13.5px;
+      }
+
+      .with-button {
+        display: flex;
+        gap: 8px;
+      }
+
+      .hint {
+        font-size: 11.5px;
+        color: var(--faint);
+        margin-top: 6px;
+        line-height: 1.45;
+      }
+
+      button {
+        padding: 9px 16px;
+        border: none;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font-family: inherit;
+        font-size: 13.5px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      button:hover:not(:disabled) {
+        background: var(--accent-hi);
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+
+      button.ghost {
+        background: #2a2a31;
+        color: #d4d4d8;
+      }
+
+      button.ghost:hover:not(:disabled) {
+        background: #34343d;
+      }
+
+      button.small {
+        padding: 4px 10px;
+        font-size: 11.5px;
+        border-radius: 6px;
+      }
+
+      button.danger {
+        background: none;
+        color: var(--err);
+        padding: 4px 8px;
+        font-size: 11.5px;
+      }
+
+      button.danger:hover:not(:disabled) {
+        background: rgba(248, 113, 113, 0.12);
+      }
+
+      .msg {
+        font-size: 12px;
+        line-height: 1.45;
+        margin-top: 6px;
+      }
+
+      .msg.ok {
+        color: var(--ok);
+      }
+
+      .msg.warn {
+        color: var(--warn);
+      }
+
+      .msg.err {
+        color: var(--err);
+      }
+
+      /* ---------- Level meter ---------- */
+      .meter {
+        display: flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 22px;
+        padding: 0 2px;
+      }
+
+      .meter i {
+        width: 4px;
+        height: 3px;
+        border-radius: 2px;
+        background: #3a3a44;
+        transition:
+          height 70ms linear,
+          background-color 70ms linear;
+      }
+
+      .meter i.lit {
+        background: var(--ok);
+      }
+
+      hr {
+        border: none;
+        border-top: 1px solid var(--line);
+        margin: 22px 0;
+        max-width: 520px;
+      }
+
+      /* ---------- Welcome ---------- */
+      .step {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        max-width: 560px;
+      }
+
+      .step-num {
+        flex-shrink: 0;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        font-size: 12.5px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .step-body {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .step h3 {
+        font-size: 13.5px;
+        font-weight: 600;
+        margin-bottom: 3px;
+      }
+
+      #welcomeHead {
+        margin-bottom: 22px;
+      }
+
+      #welcomeHead h2 {
+        font-size: 18px;
+      }
+
+      footer.bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+        padding: 12px 16px;
+        border-top: 1px solid var(--line);
+      }
+    </style>
+  </head>
+  <body>
+    <nav id="tabs" class="hidden">
+      <button data-tab="history">Tarix</button>
+      <button data-tab="settings">Sozlamalar</button>
+      <span class="spacer"></span>
+      <span id="version"></span>
+    </nav>
+
+    <main>
+      <!-- ---------------- First run ---------------- -->
+      <section id="view-welcome" class="view hidden">
+        <div class="scroll">
+          <div id="welcomeHead">
+            <h2>Whisper UZ ga xush kelibsiz</h2>
+            <p class="sub">
+              Uch qadam — keyin xohlagan dasturda <span class="kbd">Ctrl</span> +
+              <span class="kbd">Caps Lock</span> bosib gapirasiz, matn kursor turgan joyga
+              yoziladi.
+            </p>
+          </div>
+
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <h3>Aisha API kaliti</h3>
+              <p class="sub">
+                Nutqni matnga o‘girish Aisha orqali ishlaydi. To‘lov ishlatganingizcha —
+                daqiqasi 425 so‘m, oylik to‘lov yo‘q.
+              </p>
+              <div class="field" style="margin: 10px 0 0">
+                <div class="with-button">
+                  <input
+                    id="wKey"
+                    type="password"
+                    placeholder="API kalitini qo‘yib qo‘ying"
+                    autocomplete="off"
+                  />
+                  <button id="wKeyTest" class="ghost">Tekshirish</button>
+                </div>
+                <p id="wKeyMsg" class="msg"></p>
+                <p class="hint">
+                  Kalit shu kompyuterda shifrlangan holda saqlanadi.
+                  <button id="wKeyLink" class="small ghost" style="margin-left: 4px">
+                    aisha.group ni ochish
+                  </button>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <h3>Mikrofon</h3>
+              <p class="sub">Gapirib ko‘ring — chiziqlar qimirlasa, mikrofon to‘g‘ri tanlangan.</p>
+              <div class="field" style="margin: 10px 0 0">
+                <div class="with-button">
+                  <select id="wDevice">
+                    <option value="">Tizim standarti</option>
+                  </select>
+                  <button id="wMicTest" class="ghost">Tekshirish</button>
+                </div>
+                <div id="wMeter" class="meter" style="margin-top: 10px"></div>
+                <p id="wMicMsg" class="msg"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+              <h3>Sinab ko‘ring</h3>
+              <p class="sub">
+                Quyidagi maydonni bosing, <span class="kbd">Ctrl</span> +
+                <span class="kbd">Caps Lock</span> ni bosib turib gapiring va qo‘yib yuboring.
+                Chiqib ketish uchun <span class="kbd">Esc</span>.
+              </p>
+              <div class="field" style="margin: 10px 0 0">
+                <textarea id="wTry" placeholder="Matn shu yerda paydo bo‘ladi…"></textarea>
+                <p class="hint">
+                  Avval 1-qadamdagi kalitni saqlash kerak — pastdagi tugmani bosing.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <footer class="bar">
+          <button id="wSave">Saqlash va boshlash</button>
+          <span id="wSaveMsg" class="msg"></span>
+        </footer>
+      </section>
+
+      <!-- ---------------- History ---------------- -->
+      <section id="view-history" class="view hidden">
+        <div id="historyBar">
+          <input id="search" type="text" placeholder="Tarixdan izlash…" autocomplete="off" />
+        </div>
+        <div id="entries"></div>
+        <div id="historyFoot">
+          <span class="path" id="historyPath"></span>
+          <button id="clearAll" class="danger">Hammasini o‘chirish</button>
+        </div>
+      </section>
+
+      <!-- ---------------- Settings ---------------- -->
+      <section id="view-settings" class="view hidden">
+        <div class="scroll">
+          <div class="field">
+            <label for="apiKey">Aisha API kaliti</label>
+            <div class="with-button">
+              <input
+                id="apiKey"
+                type="password"
+                placeholder="API kalitini kiriting"
+                autocomplete="off"
+              />
+              <button id="keyTest" class="ghost">Tekshirish</button>
+            </div>
+            <p id="keyMsg" class="msg"></p>
+            <p class="hint">
+              aisha.group saytidan olinadi. Kalit shu kompyuterda shifrlangan holda saqlanadi.
+            </p>
+          </div>
+
+          <div class="field">
+            <label for="language">Til</label>
+            <select id="language">
+              <option value="uz">O‘zbekcha</option>
+              <option value="ru">Ruscha</option>
+              <option value="en">Inglizcha</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="device">Mikrofon</label>
+            <div class="with-button">
+              <select id="device">
+                <option value="">Tizim standarti</option>
+              </select>
+              <button id="micTest" class="ghost">Tekshirish</button>
+            </div>
+            <div id="meter" class="meter" style="margin-top: 10px"></div>
+            <p id="micMsg" class="msg"></p>
+          </div>
+
+          <div class="field row">
+            <input id="launchAtLogin" type="checkbox" />
+            <label for="launchAtLogin">Kompyuter yoqilganda avtomatik ishga tushsin</label>
+          </div>
+
+          <div class="field row">
+            <input id="showIdlePill" type="checkbox" />
+            <label for="showIdlePill">Ekran pastida kichik belgi doim turaveradi</label>
+          </div>
+
+          <div class="field row">
+            <input id="saveHistory" type="checkbox" />
+            <label for="saveHistory">Aytilgan matnlar tarixga saqlansin</label>
+          </div>
+
+          <hr />
+
+          <div class="field">
+            <label>Yangilanish</label>
+            <div class="with-button">
+              <button id="updateCheck" class="ghost">Tekshirish</button>
+              <button id="updateInstall" class="hidden">O‘rnatish va qayta ishga tushirish</button>
+            </div>
+            <p id="updateMsg" class="msg"></p>
+          </div>
+        </div>
+        <footer class="bar">
+          <button id="save">Saqlash</button>
+          <span id="saveMsg" class="msg"></span>
+        </footer>
+      </section>
+    </main>
+
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>

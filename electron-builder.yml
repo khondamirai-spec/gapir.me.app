@@ -1,0 +1,65 @@
+appId: uz.whisperuz.app
+productName: Whisper UZ
+copyright: MIT
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**
+  - package.json
+
+# Both native dependencies ship prebuilt N-API binaries — uiohook-napi under prebuilds/,
+# libnut under build/Release/ — and N-API is ABI-stable, so the Electron ABI they were built
+# against doesn't matter. Left on, electron-builder hands them to node-gyp instead, which
+# then demands a Visual Studio installation to rebuild binaries that were already correct.
+npmRebuild: false
+
+# Native modules must live outside the asar archive — .node files can't be loaded from it.
+asarUnpack:
+  - '**/node_modules/uiohook-napi/**'
+  - '**/node_modules/@nut-tree-fork/**'
+
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+  - from: resources/tray.png
+    to: tray.png
+  # ffmpeg is not optional in a packaged build: nobody who downloads an installer is going
+  # to run `winget install ffmpeg` first. `npm run dist` fetches it via predist, so a build
+  # that reaches this point always has it, and a missing file here should fail the build
+  # rather than quietly produce an installer that can't record.
+  - from: resources/ffmpeg.exe
+    to: ffmpeg.exe
+  - from: resources/ffmpeg-LICENSE.txt
+    to: ffmpeg-LICENSE.txt
+
+# Owner and repo are inferred from the git remote, so this stays correct if the repo moves.
+publish:
+  - provider: github
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.png
+  # An app that installs a keyboard hook and synthesises input trips heuristic AV detection.
+  # Signing is what actually fixes this; add certificateFile when available.
+  #
+  # Until then this must stay false. electron-updater otherwise refuses an update whose
+  # publisher signature doesn't match the running app's — a check an unsigned build can only
+  # fail. Integrity still rests on the SHA-512 in latest.yml, fetched over TLS.
+  verifyUpdateCodeSignature: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Whisper UZ
+  # A fixed name, deliberately without the version: it makes
+  # /releases/latest/download/Whisper-UZ-Setup.exe a permanent link the download page can
+  # hardcode. electron-updater reads the real filename out of latest.yml, so it doesn't care.
+  artifactName: Whisper-UZ-Setup.${ext}

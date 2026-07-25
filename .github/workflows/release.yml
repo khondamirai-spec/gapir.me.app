@@ -1,0 +1,49 @@
+name: Release
+
+# Tag a commit to ship it:
+#
+#   npm version 0.2.1 && git push --follow-tags
+#
+# That builds the installer, uploads it to a GitHub Release along with the latest.yml that
+# electron-updater reads, and every already-installed copy picks the update up within hours.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # required to create the release and upload assets
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # A release that fails its own tests is a release nobody should be able to download.
+      - run: npm run typecheck
+      - run: npm test
+
+      # ~108 MB, fetched from a pinned BtbN build with its digest verified in the script.
+      - name: Fetch ffmpeg
+        run: npm run ffmpeg
+
+      - name: Build and publish
+        run: npm run release
+        env:
+          # Provided by Actions; electron-builder infers owner/repo from the git remote.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Kept for 7 days so a bad release can be inspected without re-running the build.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Whisper-UZ-Setup
+          path: release/Whisper-UZ-Setup.exe
+          retention-days: 7
