@@ -27,6 +27,17 @@ export default defineConfig({
       alias: { '@shared': resolve('src/shared') }
     },
     build: {
+      /*
+       * Never inline an asset as a data: URI.
+       *
+       * Vite inlines anything under 4 KB by default, which quietly turned the smallest font
+       * subset into `src: url(data:font/woff2;base64,…)` — and the renderers run under
+       * `default-src 'self'`, which has no data: in it. The result is one Cyrillic subset
+       * that loads in dev and is blocked in the packaged build, which is the worst shape a
+       * bug can have. Emitting every asset as a file keeps the CSP strict and the two
+       * environments identical.
+       */
+      assetsInlineLimit: 0,
       rollupOptions: {
         input: {
           overlay: resolve('src/renderer/overlay/index.html'),

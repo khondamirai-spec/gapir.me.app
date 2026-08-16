@@ -13,8 +13,9 @@ import type { AudioDevice } from '@shared/types';
  * (https://github.com/SnosMe/uiohook-napi/issues/54) — which is exactly this app's
  * usage pattern, and would break the hotkey after the first dictation.
  *
- * The bonus: ffmpeg gives us 16 kHz mono s16le directly, which is byte-for-byte what
- * Aisha's realtime socket wants, so chunks pipe straight through with no conversion.
+ * The bonus: ffmpeg gives us 16 kHz mono s16le directly, which is byte-for-byte what the
+ * Gemini Live socket takes and, with a WAV header glued on, what the batch endpoint takes
+ * too — so chunks pipe straight through with no conversion.
  */
 
 export const SAMPLE_RATE = 16_000;
@@ -197,7 +198,10 @@ export function friendlyFfmpegError(stderr: string): string {
   if (/Device or resource busy|in use/i.test(stderr)) {
     return 'Mikrofon band — boshqa dastur ishlatyapti';
   }
-  if (/Permission denied|access/i.test(stderr)) {
+  // Both spellings in full: a bare /access/ also matched "inaccessible", "Access Violation"
+  // and any device whose name happens to contain the word, and told all of them to go and
+  // check a privacy setting that was never the problem.
+  if (/Permission denied|Access is denied|access denied/i.test(stderr)) {
     return 'Mikrofonga ruxsat yo‘q — Windows sozlamalarini tekshiring';
   }
   if (/ENOENT|not recognized/i.test(stderr)) {

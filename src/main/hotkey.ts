@@ -57,9 +57,19 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
     this.started = true;
 
     uIOhook.on('keydown', (e) => {
-      // Esc aborts an in-flight recording without pasting anything.
-      if (e.keycode === UiohookKey.Escape && this.active) {
-        this.endGesture('cancel');
+      // Esc aborts the dictation without pasting anything — and that has to keep working
+      // after the keys are released, while the transcript is still in flight. `active`
+      // tracks the physical gesture, not the dictation, so it goes false the instant the
+      // user lets go; testing it here (as this once did) made Esc silently do nothing for
+      // the whole TRANSCRIBING state, which is precisely when someone realises they
+      // misspoke. The state machine ignores a cancel it has no use for.
+      //
+      // The CapsLock correction is the half that must stay gated on `active`: with no
+      // gesture in progress the user's caps state was never toggled by us, and tapping it
+      // here would flip caps on every stray press of Escape anywhere in Windows.
+      if (e.keycode === UiohookKey.Escape) {
+        if (this.active) this.endGesture('cancel');
+        else this.emit('cancel');
         return;
       }
 

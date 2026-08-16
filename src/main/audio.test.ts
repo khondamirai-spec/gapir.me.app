@@ -71,6 +71,19 @@ Error opening input files: I/O error`;
     expect(friendlyFfmpegError("'ffmpeg' is not recognized")).toContain('ffmpeg');
   });
 
+  it('recognises a genuine permission failure', () => {
+    expect(friendlyFfmpegError('Access is denied')).toContain('ruxsat');
+    expect(friendlyFfmpegError('Permission denied')).toContain('ruxsat');
+  });
+
+  it('does not blame permissions for merely containing the word "access"', () => {
+    // The rule used to be a bare /access/, which swept up any stderr with the substring in
+    // it — including a device whose own name carries it — and sent the user off to check a
+    // Windows privacy setting that was never the problem.
+    const message = friendlyFfmpegError('[in#0 @ 0x7f] Could not open the access point filter');
+    expect(message).toBe('Mikrofonni ochib bo‘lmadi');
+  });
+
   it('falls back to a generic message rather than leaking raw stderr', () => {
     const message = friendlyFfmpegError('[in#0 @ 0x7f] some unanticipated failure');
     expect(message).toBe('Mikrofonni ochib bo‘lmadi');
@@ -122,7 +135,7 @@ describe('pcmToWav', () => {
     expect(wav.subarray(36, 40).toString('ascii')).toBe('data');
   });
 
-  it('declares the format Aisha expects: 16 kHz, mono, 16-bit PCM', () => {
+  it('declares the format Gemini expects: 16 kHz, mono, 16-bit PCM', () => {
     const wav = pcmToWav(pcm);
     expect(wav.readUInt16LE(20)).toBe(1); // PCM
     expect(wav.readUInt16LE(22)).toBe(1); // mono

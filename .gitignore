@@ -6,10 +6,28 @@ release/
 # Secrets — never commit
 .env
 .env.local
+# The keys every installed copy dictates on. They ship inside the installer, so they are
+# extractable by anyone who downloads it — that is the accepted trade (see README) — but
+# extractable from a build is not the same as public in the repository's history.
+resources/gemini-keys.json
+
+# Supabase CLI local state: the linked project ref, local container config, and anything
+# `supabase start` leaves behind. The migrations and functions above it ARE committed — they
+# are the backend's source. Note that no Supabase credential belongs in the repo either: the
+# URL and anon key are public by design and live in src/main/supabase-config.ts, while the
+# service-role key, the Gemini keys and the Payme keys exist only as `supabase secrets`.
+supabase/.temp/
+supabase/.branches/
+.branches/
 
 # Spike artifacts
 *.pcm
 *.wav
+
+# Local working material at the repo root — screen captures and design mockups
+# that live here for convenience but have no business in git history.
+/*.mp4
+/gapir.me-v*.jpg
 
 # Fetched at build time by scripts/fetch-ffmpeg.mjs — 100 MB has no business in git history
 resources/ffmpeg.exe

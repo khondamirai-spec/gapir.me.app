@@ -1,10 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   IPC,
+  type AccountState,
   type AudioDevice,
   type HistoryEntry,
-  type Language,
   type OverlayStatus,
+  type PlanSnapshot,
   type Settings,
   type UpdateStatus
 } from '../shared/types';
@@ -13,8 +14,8 @@ import {
  * The only bridge between main and the renderers. Context isolation is on and node
  * integration is off, so this surface is deliberately tiny — the renderers just draw.
  *
- * Every `on*` subscriber returns its own unsubscribe function; the app window swaps tabs
- * without reloading, so a listener that couldn't be detached would accumulate.
+ * Every `on*` subscriber returns its own unsubscribe function; the app window swaps
+ * sections without reloading, so a listener that couldn't be detached would accumulate.
  */
 
 function subscribe<T>(channel: string, cb: (value: T) => void): () => void {
@@ -29,7 +30,14 @@ const api = {
     return subscribe(IPC.overlayStatus, cb);
   },
 
-  /** Settings: the apiKey field comes back masked, never as the real key. */
+  /**
+   * Overlay: whether the cursor is on the pill. Main decides this — the overlay window is
+   * click-through and never sees a mouse event. See the hover notes in src/main/overlay.ts.
+   */
+  onOverlayHover(cb: (hovered: boolean) => void): () => void {
+    return subscribe(IPC.overlayHover, cb);
+  },
+
   getSettings(): Promise<Settings> {
     return ipcRenderer.invoke(IPC.settingsGet);
   },
@@ -42,19 +50,8 @@ const api = {
     return ipcRenderer.invoke(IPC.devicesList);
   },
 
-  /**
-   * Check a key against Aisha. Pass the key being typed; pass nothing to test the one
-   * already saved.
-   */
-  testKey(
-    apiKey?: string,
-    language?: Language
-  ): Promise<{ status: 'ok' | 'invalid' | 'unknown'; message: string }> {
-    return ipcRenderer.invoke(IPC.testKey, apiKey, language);
-  },
-
-  /** Which tab to show — sent when the tray opens the window on a specific one. */
-  onRoute(cb: (tab: string) => void): () => void {
+  /** Which section to show — sent when the tray opens the window on a specific one. */
+  onRoute(cb: (section: string) => void): () => void {
     return subscribe(IPC.appRoute, cb);
   },
 
@@ -108,6 +105,60 @@ const api = {
 
   onUpdateStatus(cb: (status: UpdateStatus) => void): () => void {
     return subscribe(IPC.updateStatus, cb);
+  },
+
+  /** ---- Frameless window controls ---- */
+  minimizeWindow(): Promise<void> {
+    return ipcRenderer.invoke(IPC.windowMinimize);
+  },
+
+  /** Resolves with whether the window ended up maximised. */
+  toggleMaximizeWindow(): Promise<boolean> {
+    return ipcRenderer.invoke(IPC.windowMaximize);
+  },
+
+  closeWindow(): Promise<void> {
+    return ipcRenderer.invoke(IPC.windowClose);
+  },
+
+  /** Fires for maximise changes we didn't initiate — Win+Up, Aero Snap, a header drag. */
+  onWindowState(cb: (maximized: boolean) => void): () => void {
+    return subscribe(IPC.windowState, cb);
+  },
+
+  /** ---- Account ---- */
+  getAccount(): Promise<AccountState> {
+    return ipcRenderer.invoke(IPC.authGet);
+  },
+
+  /**
+   * Start Google sign-in.
+   *
+   * Resolves once the system browser has been opened — **not** when the user is signed in.
+   * The consent happens in a browser we do not control and comes back through a deep link, so
+   * the signed-in state arrives on `onAccountChanged`. Awaiting this and then reading the
+   * account will read the signed-out one.
+   */
+  signIn(): Promise<{ ok: boolean; error?: string }> {
+    return ipcRenderer.invoke(IPC.authSignIn);
+  },
+
+  signOut(): Promise<void> {
+    return ipcRenderer.invoke(IPC.authSignOut);
+  },
+
+  /** Re-read the plan and today's usage from the server. */
+  refreshPlan(): Promise<PlanSnapshot | null> {
+    return ipcRenderer.invoke(IPC.authRefresh);
+  },
+
+  /** Opens the Payme checkout in the system browser. Resolves with '' or an Uzbek error. */
+  startCheckout(): Promise<string> {
+    return ipcRenderer.invoke(IPC.billingCheckout);
+  },
+
+  onAccountChanged(cb: (state: AccountState) => void): () => void {
+    return subscribe(IPC.authChanged, cb);
   },
 
   /** ---- Misc ---- */

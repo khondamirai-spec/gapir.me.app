@@ -6,10 +6,11 @@ import type { HistoryEntry, Language } from '@shared/types';
  * The dictation log — every transcript, kept so the user can copy one out again.
  *
  * Stored in its own file rather than alongside settings, for two reasons: it's the only
- * thing here that grows without bound, and a corrupt history should never take the API key
- * with it.
+ * thing here that grows without bound, and a corrupt history should never take the user's
+ * settings with it.
  *
- * Deliberately NOT encrypted, unlike the API key. The list has to be searchable and
+ * Deliberately NOT encrypted, unlike the Supabase session in auth.json (a refresh token is
+ * a credential; a transcript the user dictated is not). The list has to be searchable and
  * rendered a hundred rows at a time, and per-entry safeStorage round-trips would make both
  * slow for no real gain — anything that can read %APPDATA% can also read the process's
  * memory. What protects the user instead is being able to turn the log off entirely

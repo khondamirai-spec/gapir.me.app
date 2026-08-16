@@ -26,10 +26,6 @@ export function onUpdateStatus(cb: (status: UpdateStatus) => void): void {
   cb(status);
 }
 
-export function getUpdateStatus(): UpdateStatus {
-  return status;
-}
-
 function set(next: UpdateStatus): void {
   status = next;
   listener?.(next);

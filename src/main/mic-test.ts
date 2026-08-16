@@ -50,7 +50,3 @@ export function stopMicTest(): void {
   recorder?.stop();
   recorder = null;
 }
-
-export function micTestRunning(): boolean {
-  return recorder !== null;
-}

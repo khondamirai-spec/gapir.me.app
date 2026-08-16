@@ -12,8 +12,8 @@ import type { SttAdapter, SttSession, SttSessionOptions } from './types';
 const SENTENCE = [
   'Salom,',
   'bu',
-  'Whisper',
-  'UZ',
+  'gapir',
+  'me',
   'ilovasining',
   'sinov',
   'matni.',

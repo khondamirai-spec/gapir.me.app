@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   app,
   BrowserWindow,
@@ -10,10 +10,10 @@ import {
   shell,
   dialog
 } from 'electron';
-import { IPC, type Language, type Settings } from '@shared/types';
+import { IPC, type AppSection, type Settings } from '@shared/types';
 import { createOverlay, destroyOverlay, setIdleVisible } from './overlay';
 import { dictation } from './state';
-import { getSettings, resolveApiKey, setSettings } from './config';
+import { getSettings, setSettings } from './config';
 import { refreshDevices } from './audio';
 import {
   clearHistory,
@@ -23,7 +23,18 @@ import {
   removeHistory
 } from './history';
 import { startMicTest, stopMicTest } from './mic-test';
-import { verifyApiKey } from './stt/verify-key';
+import { initLogger, logDirectory } from './logger';
+import {
+  accountState,
+  completeSignIn,
+  initAuth,
+  onAccountChanged,
+  refreshPlan,
+  signIn,
+  signOut
+} from './auth';
+import { openCheckout } from './billing';
+import { AUTH_PROTOCOL } from './supabase-config';
 import {
   checkForUpdates,
   initUpdater,
@@ -37,8 +48,6 @@ import {
  * There is no main window in the usual sense — this app lives in the tray and the overlay,
  * and the window is somewhere you visit to read your history or change a setting.
  */
-
-export type AppTab = 'history' | 'settings';
 
 let tray: Tray | null = null;
 let appWin: BrowserWindow | null = null;
@@ -57,7 +66,41 @@ if (!isPrimaryInstance) {
   app.quit();
 }
 
-app.on('second-instance', () => openApp('history'));
+/**
+ * The sign-in callback arrives here, and only here.
+ *
+ * On Windows a `gapirme://` link launches a *second* copy of the app with the URL as an argv
+ * entry. That copy loses the single-instance lock and quits — so if the URL were not forwarded
+ * and read here, every sign-in would silently do nothing. The lock and the deep link are one
+ * mechanism, which is worth knowing before touching either.
+ *
+ * Scanned rather than indexed because the position of the URL in argv is not ours to predict:
+ * Electron adds its own arguments, and a packaged build's argv differs from a dev run's.
+ */
+function handleDeepLink(argv: string[]): boolean {
+  const url = argv.find((arg) => arg.startsWith(`${AUTH_PROTOCOL}://`));
+  if (!url) return false;
+  void completeSignIn(url).then((handled) => {
+    // Bring the window forward so the user sees they are signed in, rather than being left
+    // looking at the browser tab that sent them here.
+    if (handled) openApp('account');
+  });
+  return true;
+}
+
+app.on('second-instance', (_event, argv) => {
+  if (handleDeepLink(argv)) return;
+  openApp('dictation');
+});
+
+// macOS delivers deep links as an event instead of argv. Harmless on Windows, and it means
+// the auth flow is already correct on the day the four platform files get their branches.
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  void completeSignIn(url).then((handled) => {
+    if (handled) openApp('account');
+  });
+});
 
 // Keep the app alive with no windows open — it's a tray app. Merely registering a
 // listener suppresses Electron's default quit-on-last-window-closed behaviour.
@@ -69,24 +112,28 @@ function iconPath(name: string): string {
     : join(__dirname, '../../resources', name);
 }
 
-function openApp(tab: AppTab): void {
+function openApp(section: AppSection): void {
   if (appWin && !appWin.isDestroyed()) {
+    if (appWin.isMinimized()) appWin.restore();
     appWin.show();
     appWin.focus();
-    appWin.webContents.send(IPC.appRoute, tab);
+    appWin.webContents.send(IPC.appRoute, section);
     return;
   }
 
   appWin = new BrowserWindow({
-    width: 720,
-    // Tall enough that the three welcome steps and the whole settings form fit without
-    // scrolling. The welcome flow is the first thing a new user sees, and a step below the
-    // fold is a step nobody does.
-    height: 700,
-    minWidth: 560,
-    minHeight: 420,
-    title: 'Whisper UZ',
-    backgroundColor: '#17171b',
+    width: 1120,
+    height: 740,
+    minWidth: 880,
+    minHeight: 560,
+    title: 'gapir me',
+    // The title bar is drawn in the renderer, so the frame has to go. Everything that a
+    // frame used to do — drag, minimise, maximise, close — is wired over IPC below, and
+    // the drag region is the `-webkit-app-region: drag` header in the app's HTML.
+    frame: false,
+    // Matches --paper in the app's stylesheet, so a slow first paint isn't a flash of
+    // black. Change one and change the other.
+    backgroundColor: '#ffeee0',
     autoHideMenuBar: true,
     icon: iconPath('icon.png'),
     webPreferences: {
@@ -96,12 +143,19 @@ function openApp(tab: AppTab): void {
     }
   });
 
-  // The tab is in the hash so it survives the initial load; later switches come over IPC.
+  // The section is in the hash so it survives the initial load; later switches come over IPC.
   if (process.env.ELECTRON_RENDERER_URL) {
-    void appWin.loadURL(`${process.env.ELECTRON_RENDERER_URL}/app/index.html#${tab}`);
+    void appWin.loadURL(`${process.env.ELECTRON_RENDERER_URL}/app/index.html#${section}`);
   } else {
-    void appWin.loadFile(join(__dirname, '../renderer/app/index.html'), { hash: tab });
+    void appWin.loadFile(join(__dirname, '../renderer/app/index.html'), { hash: section });
   }
+
+  // Without a frame the maximise glyph is ours to keep truthful, and the window can be
+  // maximised by ways we never hear about otherwise (Win+Up, a double-click on the header,
+  // Aero Snap).
+  const sendWindowState = (): void => toAppWindow(IPC.windowState, appWin?.isMaximized() ?? false);
+  appWin.on('maximize', sendWindowState);
+  appWin.on('unmaximize', sendWindowState);
 
   appWin.on('closed', () => {
     appWin = null;
@@ -118,13 +172,15 @@ function toAppWindow(channel: string, payload?: unknown): void {
 function buildTray(): void {
   const image = nativeImage.createFromPath(iconPath('tray.png'));
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-  tray.setToolTip('Whisper UZ — Ctrl+Caps Lock bosib gapiring');
+  tray.setToolTip('gapir me — Ctrl+Caps Lock bosib gapiring');
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: `Whisper UZ ${app.getVersion()}`, enabled: false },
+      { label: `gapir me ${app.getVersion()}`, enabled: false },
       { type: 'separator' },
-      { label: 'Tarix…', click: () => openApp('history') },
+      { label: 'Diktovka…', click: () => openApp('dictation') },
+      { label: 'Statistika…', click: () => openApp('insights') },
+      { label: 'Hisob…', click: () => openApp('account') },
       { label: 'Sozlamalar…', click: () => openApp('settings') },
       {
         label: 'Yangilanishlarni tekshirish',
@@ -136,27 +192,23 @@ function buildTray(): void {
       { type: 'separator' },
       {
         label: 'Loglar papkasi',
-        click: () => void shell.openPath(app.getPath('userData'))
+        click: () => void shell.openPath(logDirectory())
       },
       { type: 'separator' },
       { label: 'Chiqish', click: () => app.quit() }
     ])
   );
 
-  tray.on('click', () => openApp('history'));
-  tray.on('double-click', () => openApp('history'));
+  tray.on('click', () => openApp('dictation'));
+  tray.on('double-click', () => openApp('dictation'));
 }
 
 function registerIpc(): void {
-  ipcMain.handle(IPC.settingsGet, () => {
-    const s = getSettings();
-    // Never ship the raw key to a renderer; a presence flag is all the UI needs.
-    return { ...s, apiKey: s.apiKey ? '••••••••' : '' };
-  });
+  // Nothing is filtered on the way out any more: the settings hold no credential, because
+  // the key the app dictates on is the app's rather than the user's. See src/main/config.ts.
+  ipcMain.handle(IPC.settingsGet, (): Settings => getSettings());
 
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<Settings>) => {
-    // The masked placeholder means "unchanged" — don't overwrite the real key with dots.
-    if (patch.apiKey === '••••••••') delete patch.apiKey;
     try {
       setSettings(patch);
       // Applied here rather than inside config.ts so that module stays free of UI concerns.
@@ -169,12 +221,6 @@ function registerIpc(): void {
 
   // Opening the app is also the natural moment to notice newly plugged-in microphones.
   ipcMain.handle(IPC.devicesList, () => refreshDevices());
-
-  ipcMain.handle(IPC.testKey, (_e, apiKey?: string, language?: Language) => {
-    // An empty or masked field means "test the key you already have".
-    const key = apiKey && apiKey !== '••••••••' ? apiKey : resolveApiKey();
-    return verifyApiKey(key, language ?? getSettings().language);
-  });
 
   ipcMain.handle(IPC.historyList, () => ({
     entries: listHistory(),
@@ -207,6 +253,42 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updateInstall, () => installUpdate());
   ipcMain.handle(IPC.appVersion, () => app.getVersion());
 
+  // Window controls. `BrowserWindow.fromWebContents` rather than the module-level `appWin`
+  // so a control can only ever act on the window it was clicked in.
+  ipcMain.handle(IPC.windowMinimize, (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
+  ipcMain.handle(IPC.windowMaximize, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle(IPC.windowClose, (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+
+  // ---- Account ----
+  //
+  // Note what crosses this boundary: a name, an email and two numbers (no avatar URL —
+  // auth.ts drops it, the window's CSP couldn't load it anyway). The
+  // access token stays in main. That is the same rule the old `settingsGet` handler used to
+  // enforce for the Gemini key, applied to the credential that replaced it — a window that
+  // renders hundreds of arbitrary transcripts has no business holding a bearer token.
+  ipcMain.handle(IPC.authGet, () => accountState());
+
+  // Resolves as soon as the browser opens, NOT when the user is signed in. The result comes
+  // back through the deep link and arrives on IPC.authChanged; see the note in the IPC map.
+  ipcMain.handle(IPC.authSignIn, () => signIn());
+
+  ipcMain.handle(IPC.authSignOut, async () => {
+    await signOut();
+  });
+
+  ipcMain.handle(IPC.authRefresh, () => refreshPlan());
+
+  // No arguments, deliberately: the user is identified by the token main already holds, and
+  // the price is the server's to decide. A renderer that could name either would be a
+  // renderer that could name someone else's account or a cheaper price.
+  ipcMain.handle(IPC.billingCheckout, () => openCheckout());
+
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {
     // Never hand an arbitrary string to the shell — a file: or ms-msdt: URL from a
     // compromised renderer would execute rather than browse.
@@ -215,9 +297,30 @@ function registerIpc(): void {
   });
 }
 
+/**
+ * Claim the `gapirme://` scheme so the browser can hand the sign-in back to us.
+ *
+ * The dev-mode form is not optional cosmetics: under `npm run dev` the running binary is
+ * `electron.exe`, which would register *itself* as the handler for every project on the
+ * machine. Passing the entry script pins the registration to this app, and is the only way
+ * the sign-in flow can be tested without packaging first.
+ */
+function registerProtocol(): void {
+  const ok = app.isPackaged
+    ? app.setAsDefaultProtocolClient(AUTH_PROTOCOL)
+    : app.setAsDefaultProtocolClient(AUTH_PROTOCOL, process.execPath, [
+        resolve(process.argv[1] ?? '')
+      ]);
+  if (!ok) console.warn(`[auth] could not register the ${AUTH_PROTOCOL}:// handler`);
+}
+
 function bootstrap(): void {
   app.setAppUserModelId('uz.whisperuz.app');
 
+  // First, so that everything below reports its failures somewhere a user can find them.
+  initLogger();
+
+  registerProtocol();
   registerIpc();
   createOverlay();
   setIdleVisible(getSettings().showIdlePill);
@@ -226,7 +329,12 @@ function bootstrap(): void {
   // Keep an open window in step with dictations happening in other apps.
   onHistoryChanged(() => toAppWindow(IPC.historyChanged));
   onUpdateStatus((status) => toAppWindow(IPC.updateStatus, status));
+  onAccountChanged((state) => toAppWindow(IPC.authChanged, state));
   void initUpdater();
+
+  // Restoring the session is what decides whether the very next hotkey press can dictate, so
+  // it starts here rather than when the window first opens — most launches never open one.
+  void initAuth();
 
   // Populate the device cache up front — enumeration shells out to ffmpeg and is far too
   // slow to run on the hotkey path.
@@ -238,15 +346,21 @@ function bootstrap(): void {
     dictation.init();
   } catch (err) {
     dialog.showErrorBox(
-      'Whisper UZ',
+      'gapir me',
       `Klaviatura hooki ishga tushmadi:\n\n${err instanceof Error ? err.message : String(err)}`
     );
   }
 
-  // Launched by the login item — stay quiet in the tray. Otherwise a first run with no key
-  // opens straight onto the welcome flow, which is the only way anyone gets started.
-  if (!process.argv.includes('--hidden') && !getSettings().apiKey) {
-    openApp('settings');
+  // A cold start *through* the protocol: the app wasn't running when the browser finished the
+  // sign-in, so the callback is in our own argv rather than a second instance's. Rare — it
+  // needs the app to have been closed mid-sign-in — but the alternative is a consent the user
+  // gave being silently dropped.
+  if (handleDeepLink(process.argv)) return;
+
+  // Launched by the login item — stay quiet in the tray. Otherwise a first run opens on the
+  // welcome flow, which is where someone learns the hotkey exists at all.
+  if (!process.argv.includes('--hidden') && !getSettings().onboarded) {
+    openApp('dictation');
   }
 }
 

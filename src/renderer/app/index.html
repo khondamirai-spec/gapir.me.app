@@ -6,291 +6,955 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
     />
-    <title>Whisper UZ</title>
+    <title>gapir me</title>
     <style>
+      /* =========================================================================
+         gapir me — app window
+
+         Hand-written CSS on purpose (see CLAUDE.md): this is one window with a
+         sidebar and six panes, and a framework would be more machinery than the
+         whole thing is worth.
+
+         The palette is warm paper rather than the usual dark-grey-app look. It is
+         a tool people keep open next to a document all day, and it should feel
+         like stationery, not like a console. The specific paper and the specific
+         ink are the gapir.me brand's — see design-style.md.
+         ========================================================================= */
+
       * {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
       }
 
+      /* ------------------------------------------------------------- palette
+         Two brand colors and nothing else: deep burgundy ink on warm cream.
+         Every --ink-N below is a *mix of those two*, not a grey with a tint —
+         which is why nothing in this window ever drifts toward neutral, and why
+         adding a "just one" third hue would be visible immediately.
+
+         The token names are the ones the rest of this file already used, so the
+         recolour is a value swap rather than 1800 lines of edits. Two things did
+         change meaning underneath them, and rules further down assume it:
+
+           - --accent is now ink, not amber. A filled button is the DARKEST thing
+             on a pane rather than the brightest, so --accent-ink (the text on it)
+             is cream, and --accent-hi (its hover) goes deeper rather than lighter.
+           - separation is a hairline, never a shadow. The only shadow left in
+             this file is on #toast, which genuinely floats.
+
+         Cream is meant to own ~90% of every pane, so ink fills are rationed to
+         roughly one per view — the primary button, and nothing competing with it. */
       :root {
-        --bg: #17171b;
-        --panel: #1e1e24;
-        --field: #212127;
-        --line: #2e2e37;
-        --text: #e8e8ea;
-        --muted: #8b8b93;
-        --faint: #6b6b74;
-        --accent: #6d5ccf;
-        --accent-hi: #7c6bd6;
-        --ok: #4ade80;
-        --warn: #fbbf24;
-        --err: #f87171;
+        --paper: #ffeee0; /* base: page, and the ~90% */
+        --card: #f7e2d6; /* cards sit one step deeper than the page, not lighter */
+        --card-2: #f1dace; /* the only step below a card: row hover, previews */
+        --line: #ebd2c9;
+        --line-strong: #ddbcaf;
+        --ink: #3a0116;
+        --ink-2: #72253e;
+        --ink-3: #8b495b;
+        --ink-4: #a46c78;
+        --hover: #f7e2d6;
+        --active: #ebd2c9;
+        --accent: #590222;
+        --accent-hi: #3a0116;
+        --accent-ink: #ffeee0;
+        /* Functional colour carries meaning only, and there are exactly three.
+           --live is the "something is happening right now" red, used by the mic
+           meter. --warn has no token of its own in the brand, and borrowing
+           --live beats inventing a fourth hue: the one warning this app still
+           shows ("update check failed") means look-at-me, not stop. */
+        --live: #c3123f;
+        --ok: #3f6b4f;
+        --warn: var(--live);
+        --err: #a8321e;
+        --radius: 14px;
+        --radius-sm: 9px;
+        /* One easing for everything that moves, so the whole window feels like one thing. */
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+        /* Three faces, bundled in src/renderer/fonts and shared with the website: Figtree
+           carries the interface, EB Garamond is reserved for headings and figures, Geist
+           Mono for the rare technical accent. Onest sits behind Figtree for Cyrillic only —
+           Figtree has no Cyrillic glyphs and people read Russian transcripts here; see
+           fonts.css for the unicode-range routing. The system stacks after each are only
+           there for the instant before the woff2 lands. */
+        --font-ui: 'Figtree', 'Onest', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+        --font-display: 'EB Garamond', Georgia, 'Times New Roman', serif;
+        --font-mono: 'Geist Mono', 'Cascadia Mono', Consolas, monospace;
       }
 
       html,
       body {
         height: 100%;
+        overflow: hidden;
       }
 
       body {
         display: flex;
         flex-direction: column;
-        font-family: 'Segoe UI', system-ui, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font-ui);
         font-size: 14px;
-        background: var(--bg);
-        color: var(--text);
+        line-height: 1.45;
         -webkit-font-smoothing: antialiased;
-        overflow: hidden;
+        /* All three families are variable fonts covering every weight the window asks for,
+           so a synthesised (smeared) bold is always a bug — most likely Garamond asked for
+           a weight above 800. Fail to the real nearest weight instead. */
+        font-synthesis-weight: none;
       }
 
-      /* ---------- Tab bar ---------- */
-      #tabs {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        flex-shrink: 0;
-        padding: 10px 16px 0;
-        border-bottom: 1px solid var(--line);
-      }
-
-      #tabs button {
-        padding: 8px 14px 10px;
-        border: none;
-        border-bottom: 2px solid transparent;
-        border-radius: 6px 6px 0 0;
-        background: none;
-        color: var(--muted);
-        font-family: inherit;
-        font-size: 13.5px;
+      /* Headings and figures. Grouped here rather than repeated on a dozen rules so that
+         "what is set in the display face" is one list you can read. Weight 500, not bold:
+         Garamond carries emphasis through contrast and size, and at 700 it stops looking
+         editorial and starts looking like a ransom note. Rules below override to 600 where
+         a label sits small inside a row and needs the extra ink. This also overrides the
+         UA's `b { font-weight: bold }`, which is the point. */
+      h1,
+      #brand .name,
+      .stat b,
+      .figure,
+      .panel-head h2,
+      .metric-row b,
+      .choice b,
+      .toggle-row .label b,
+      .help-item b,
+      .step-body h3 {
+        font-family: var(--font-display);
         font-weight: 500;
-        cursor: pointer;
       }
 
-      #tabs button:hover {
-        color: var(--text);
+      ::selection {
+        background: rgba(89, 2, 34, 0.18);
       }
 
-      #tabs button.on {
-        color: var(--text);
-        border-bottom-color: var(--accent);
+      /* Scrollbars: present when you need them, invisible when you don't. */
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
       }
-
-      #tabs .spacer {
-        flex: 1;
+      ::-webkit-scrollbar-thumb {
+        background: var(--line-strong);
+        border: 3px solid transparent;
+        background-clip: content-box;
+        border-radius: 8px;
       }
-
-      #version {
-        font-size: 11.5px;
-        color: var(--faint);
-        padding-right: 4px;
+      ::-webkit-scrollbar-thumb:hover {
+        background: #bd9094;
+        background-clip: content-box;
       }
-
-      /* ---------- Views ---------- */
-      main {
-        flex: 1;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .view {
-        flex: 1;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
+      ::-webkit-scrollbar-track {
+        background: transparent;
       }
 
       .hidden {
         display: none !important;
       }
 
-      h2 {
-        font-size: 15px;
+      /* ---------------------------------------------------------- title bar */
+
+      #titlebar {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+        height: 44px;
+        padding-left: 10px;
+        /* The whole bar drags the window; the buttons opt back out below. */
+        -webkit-app-region: drag;
+      }
+
+      #titlebar button,
+      .win-btn {
+        -webkit-app-region: no-drag;
+      }
+
+      .icon-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border: none;
+        border-radius: 8px;
+        background: none;
+        color: var(--ink-2);
+        cursor: pointer;
+        transition:
+          background-color 140ms var(--ease),
+          color 140ms var(--ease),
+          transform 140ms var(--ease);
+      }
+
+      .icon-btn:hover {
+        background: var(--hover);
+        color: var(--ink);
+      }
+
+      .icon-btn:active {
+        transform: scale(0.92);
+      }
+
+      .icon-btn svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      #titlebar .spacer {
+        flex: 1;
+      }
+
+      #winControls {
+        display: flex;
+        align-items: stretch;
+        height: 44px;
+        margin-left: 6px;
+      }
+
+      .win-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 46px;
+        border: none;
+        background: none;
+        color: var(--ink-2);
+        cursor: pointer;
+        transition:
+          background-color 120ms linear,
+          color 120ms linear;
+      }
+
+      .win-btn:hover {
+        background: var(--hover);
+        color: var(--ink);
+      }
+
+      .win-btn.close:hover {
+        background: var(--err);
+        color: var(--paper);
+      }
+
+      .win-btn svg {
+        width: 11px;
+        height: 11px;
+      }
+
+      /* ------------------------------------------------------------- shell */
+
+      #body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+
+      /* ----------------------------------------------------------- sidebar */
+
+      #sidebar {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        width: 236px;
+        padding: 0 12px 12px 14px;
+        overflow: hidden;
+        transition:
+          width 220ms var(--ease),
+          padding 220ms var(--ease),
+          opacity 160ms linear;
+      }
+
+      body.sidebar-collapsed #sidebar {
+        width: 0;
+        padding-left: 0;
+        padding-right: 0;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #brand {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 2px 2px 18px;
+        white-space: nowrap;
+      }
+
+      /* Sized off the mark's width, not its height — it is about 2:1, so a box sized for a
+         26px icon would draw it 13px tall next to 16px type and the waveform would vanish.
+         The mark, the wordmark and the badge share one 208px row (236px sidebar less its own
+         padding), and the wordmark is the part that has to read from across a desk — so it
+         gets the room, and the mark is sized to what is left. */
+      #brand .mark {
+        width: 80px;
+        height: auto;
+        flex-shrink: 0;
+      }
+
+      #brand .name {
+        font-size: 26px;
+        letter-spacing: -0.4px;
+      }
+
+      /* Scoped to the brand: `.badge` is also the nav's pill, which must stay small. */
+      #brand .badge {
+        padding: 2px 9px;
+        font-size: 13.5px;
+      }
+
+      .badge {
+        padding: 1.5px 7px;
+        border: 1px solid var(--line-strong);
+        border-radius: 20px;
+        background: var(--card);
+        font-size: 10.5px;
         font-weight: 600;
-        margin-bottom: 3px;
+        color: var(--ink-2);
+        letter-spacing: 0.1px;
       }
 
-      .sub {
-        font-size: 12.5px;
-        color: var(--muted);
-        line-height: 1.5;
+      .badge.new {
+        border-color: transparent;
+        background: var(--accent);
+        color: var(--accent-ink);
       }
 
-      .kbd {
-        display: inline-block;
-        padding: 1px 6px;
-        border-radius: 5px;
-        background: #2a2a31;
-        border: 1px solid #3a3a44;
-        font-size: 11.5px;
-        color: #d4d4d8;
+      nav#nav {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
       }
 
-      /* ---------- History ---------- */
-      #historyBar {
+      .nav-item {
         display: flex;
         align-items: center;
         gap: 10px;
+        width: 100%;
+        padding: 7px 9px;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: none;
+        color: var(--ink-2);
+        font: inherit;
+        font-size: 13.5px;
+        text-align: left;
+        white-space: nowrap;
+        cursor: pointer;
+        transition:
+          background-color 140ms var(--ease),
+          color 140ms var(--ease);
+      }
+
+      .nav-item svg {
+        width: 16px;
+        height: 16px;
         flex-shrink: 0;
-        padding: 12px 16px;
+        opacity: 0.85;
       }
 
-      #search {
-        flex: 1;
+      .nav-item:hover {
+        background: var(--hover);
+        color: var(--ink);
       }
 
-      #entries {
-        flex: 1;
-        overflow-y: auto;
-        padding: 0 16px 16px;
-      }
-
-      .entry {
-        padding: 11px 13px;
-        margin-bottom: 8px;
-        border-radius: 10px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-      }
-
-      .entry-head {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-
-      .entry-when {
-        font-size: 11.5px;
-        color: var(--faint);
-      }
-
-      .chip {
-        padding: 1px 6px;
-        border-radius: 4px;
-        background: #2a2a31;
-        font-size: 10.5px;
+      .nav-item.on {
+        background: var(--active);
+        color: var(--ink);
         font-weight: 600;
-        letter-spacing: 0.4px;
-        color: var(--muted);
-        text-transform: uppercase;
       }
 
-      .entry-actions {
-        display: flex;
-        gap: 6px;
+      .nav-item .tail {
         margin-left: auto;
       }
 
-      .entry-text {
-        font-size: 13.5px;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        word-break: break-word;
-        cursor: pointer;
+      /* A count of things needing attention — currently only a ready update. */
+      .dot {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 17px;
+        height: 17px;
+        padding: 0 4px;
+        border-radius: 9px;
+        background: var(--err);
+        color: var(--paper);
+        font-size: 10.5px;
+        font-weight: 700;
       }
 
-      /* Long dictations are clamped until clicked — the list is for scanning. */
-      .entry-text.clamped {
-        display: -webkit-box;
-        -webkit-line-clamp: 3;
-        -webkit-box-orient: vertical;
+      #sidebarBottom {
+        margin-top: auto;
+        padding-top: 14px;
+      }
+
+      /* --------------------------------------------------------- main pane */
+
+      #content {
+        flex: 1;
+        min-width: 0;
+        padding: 0 18px 18px 4px;
         overflow: hidden;
       }
 
-      #historyFoot {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-shrink: 0;
-        padding: 10px 16px;
-        border-top: 1px solid var(--line);
-        font-size: 11.5px;
-        color: var(--faint);
+      .view {
+        display: none;
+        height: 100%;
+        min-height: 0;
+        flex-direction: column;
       }
 
-      #historyFoot .path {
+      .view.on {
+        display: flex;
+        animation: viewIn 260ms var(--ease) both;
+      }
+
+      @keyframes viewIn {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+      }
+
+      .view-head {
+        flex-shrink: 0;
+        padding: 6px 4px 18px;
+      }
+
+      h1 {
+        font-size: 25px;
+        letter-spacing: -0.5px;
+      }
+
+      .view-head p {
+        margin-top: 5px;
+        font-size: 13px;
+        color: var(--ink-3);
+        max-width: 62ch;
+      }
+
+      .columns {
+        display: flex;
+        gap: 18px;
         flex: 1;
+        min-height: 0;
+      }
+
+      .col-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        flex-shrink: 0;
+        width: 268px;
+        overflow-y: auto;
+      }
+
+      @media (max-width: 1020px) {
+        .rail {
+          display: none;
+        }
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--card);
+      }
+
+      .card.pad {
+        padding: 16px;
+      }
+
+      .scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      /* ---------------------------------------------------------- account */
+
+      .acc-identity {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 18px;
+      }
+
+      /* Initials, not the Google profile picture.
+         `default-src 'self'` in the CSP above would block the remote image in a packaged
+         build (it loads fine in dev, which is the trap), and widening the policy to fetch a
+         decoration would also tell Google's CDN every time someone opens this window. Same
+         reasoning as the bundled fonts: this app does not reach out to draw itself. */
+      .acc-avatar {
+        width: 52px;
+        height: 52px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-display);
+        font-size: 19px;
+        font-weight: 600;
+        color: var(--ink-2);
+        text-transform: uppercase;
+        user-select: none;
+      }
+
+      .acc-who {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .acc-who b {
+        font-family: var(--font-display);
+        font-size: 16px;
+      }
+
+      .acc-who span {
+        font-size: 13px;
+        color: var(--ink-2);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
-      .empty {
-        padding: 44px 20px;
-        text-align: center;
-        color: var(--faint);
-        font-size: 13px;
-        line-height: 1.6;
+      .acc-plan {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
       }
 
-      /* ---------- Settings / welcome forms ---------- */
-      .scroll {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px 16px 20px;
+      .acc-plan-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
       }
 
-      .field {
-        margin-bottom: 15px;
+      .acc-plan-head b {
+        font-family: var(--font-display);
+        font-size: 18px;
+      }
+
+      /* The usage bar. A bar rather than a number alone because "24 / 30" is a fact and
+         "nearly out" is the thing the user actually wants to read off it at a glance. */
+      .acc-bar {
+        height: 8px;
+        border-radius: 20px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+
+      .acc-bar i {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 20px;
+        background: var(--accent);
+        transition: width 0.35s var(--ease);
+      }
+
+      /* Two thirds through the day's allowance is the moment to say so, rather than at the
+         wall — someone mid-document deserves warning while they can still act on it. */
+      .acc-bar i.low {
+        background: #c4703a;
+      }
+
+      .acc-bar i.out {
+        background: var(--danger, #b3462f);
+      }
+
+      .acc-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .acc-empty {
+        padding: 28px 22px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 14px;
         max-width: 520px;
       }
 
-      label {
-        display: block;
-        font-size: 12px;
-        font-weight: 500;
-        color: #a1a1aa;
-        margin-bottom: 6px;
+      .acc-empty h2 {
+        font-family: var(--font-display);
+        font-size: 20px;
       }
 
-      input[type='password'],
+      .acc-empty p {
+        color: var(--ink-2);
+        font-size: 13.5px;
+        line-height: 1.6;
+      }
+
+      /* Google's own mark, inlined. Required by their branding terms on a sign-in button, and
+         a remote image would be blocked by the packaged build's default-src 'self' anyway. */
+      .g-mark {
+        width: 17px;
+        height: 17px;
+        flex-shrink: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .acc-bar i {
+          transition: none;
+        }
+      }
+
+      /* ------------------------------------------------------ history list */
+
+      #dictationCard {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .group-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 13px 16px 9px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.9px;
+        text-transform: uppercase;
+        color: var(--ink-4);
+      }
+
+      .entry {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 12px 14px 12px 16px;
+        border-top: 1px solid var(--line);
+        animation: rowIn 320ms var(--ease) both;
+      }
+
+      @keyframes rowIn {
+        from {
+          opacity: 0;
+          transform: translateY(5px);
+        }
+      }
+
+      .entry:hover {
+        background: var(--card-2);
+      }
+
+      .entry .when {
+        flex-shrink: 0;
+        width: 74px;
+        padding-top: 1px;
+        font-size: 12px;
+        color: var(--ink-4);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .entry .text {
+        flex: 1;
+        min-width: 0;
+        font-size: 14.5px;
+        line-height: 1.55;
+        color: var(--ink);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        cursor: text;
+      }
+
+      /* Long dictations are clamped until clicked — the list is for scanning. */
+      .entry .text.clamped {
+        display: -webkit-box;
+        -webkit-line-clamp: 4;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .entry .more {
+        display: block;
+        margin-top: 3px;
+        border: none;
+        background: none;
+        padding: 0;
+        color: var(--ink-3);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .entry .more:hover {
+        color: var(--ink);
+      }
+
+      .entry .actions {
+        display: flex;
+        gap: 2px;
+        flex-shrink: 0;
+        opacity: 0;
+        transform: translateX(3px);
+        transition:
+          opacity 150ms var(--ease),
+          transform 150ms var(--ease);
+      }
+
+      .entry:hover .actions,
+      .entry:focus-within .actions {
+        opacity: 1;
+        transform: none;
+      }
+
+      .empty {
+        padding: 54px 24px;
+        text-align: center;
+        color: var(--ink-3);
+        font-size: 13.5px;
+        line-height: 1.7;
+      }
+
+      .empty .big {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+
+      kbd {
+        display: inline-block;
+        padding: 1px 6px 2px;
+        border: 1px solid var(--line-strong);
+        border-bottom-width: 2px;
+        border-radius: 6px;
+        background: var(--card);
+        font-family: inherit;
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+
+      /* ----------------------------------------------------------- search */
+
+      #searchWrap {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+      }
+
+      #search {
+        width: 0;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: var(--card-2);
+        color: var(--ink);
+        font: inherit;
+        font-size: 13px;
+        opacity: 0;
+        transition:
+          width 220ms var(--ease),
+          opacity 160ms linear,
+          padding 220ms var(--ease);
+      }
+
+      #searchWrap.open #search {
+        width: 210px;
+        padding: 5px 9px;
+        border-color: var(--line-strong);
+        opacity: 1;
+      }
+
+      /* --------------------------------------------------------- rail cards */
+
+      .stat {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        margin-bottom: 11px;
+      }
+
+      .stat:last-child {
+        margin-bottom: 0;
+      }
+
+      .stat b {
+        font-size: 25px;
+        letter-spacing: -0.6px;
+        /* lining-nums: Garamond's default figures are old-style and dip below the baseline,
+           which reads as a typo in a statistic. Same on every numeric display rule. */
+        font-variant-numeric: lining-nums tabular-nums;
+      }
+
+      .stat span {
+        font-size: 12.5px;
+        color: var(--ink-3);
+      }
+
+      .hotkey-card h4 {
+        font-size: 12.5px;
+        font-weight: 700;
+        letter-spacing: 0.9px;
+        text-transform: uppercase;
+        color: var(--ink-4);
+        margin-bottom: 10px;
+      }
+
+      /* Key, then what it does underneath it — rather than one line that wraps between the
+         two <kbd>s and reads as three separate keys. */
+      .hotkey-card p {
+        font-size: 12.5px;
+        color: var(--ink-2);
+      }
+
+      .hotkey-card span {
+        display: block;
+        margin: 5px 0 14px;
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+
+      .hotkey-card span:last-child {
+        margin-bottom: 0;
+      }
+
+      /* ---------------------------------------------------------- controls */
+
+      button.btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 8px 14px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+        cursor: pointer;
+        transition:
+          background-color 140ms var(--ease),
+          border-color 140ms var(--ease),
+          transform 120ms var(--ease);
+      }
+
+      /* Hover deepens the ink; it does not glow. A coloured halo under a filled
+         button is a third colour by another name, and the fill is already the
+         darkest thing on the pane — there is nothing for a glow to add. */
+      button.btn:hover:not(:disabled) {
+        background: var(--accent-hi);
+      }
+
+      button.btn:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+
+      button.btn:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      button.btn.ghost {
+        background: var(--card);
+        border-color: var(--line-strong);
+        color: var(--ink);
+        font-weight: 500;
+      }
+
+      /* --active, not --hover: a ghost button is already filled with --card, and
+         --hover is that same surface. It would hover to nothing. */
+      button.btn.ghost:hover:not(:disabled) {
+        background: var(--active);
+      }
+
+      button.btn.small {
+        padding: 5px 10px;
+        font-size: 12px;
+        border-radius: 8px;
+      }
+
+      button.btn.danger {
+        background: none;
+        border-color: transparent;
+        color: var(--err);
+        font-weight: 500;
+      }
+
+      button.btn.danger:hover:not(:disabled) {
+        background: rgba(168, 50, 30, 0.1);
+      }
+
+      button.btn.wide {
+        width: 100%;
+      }
+
       input[type='text'],
-      textarea,
-      select {
+      input[type='password'],
+      select,
+      textarea {
         width: 100%;
         padding: 9px 11px;
-        border-radius: 8px;
-        background: var(--field);
-        border: 1px solid #34343d;
-        color: var(--text);
-        font-family: inherit;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        background: var(--card);
+        color: var(--ink);
+        font: inherit;
         font-size: 13.5px;
         outline: none;
-      }
-
-      textarea {
-        resize: vertical;
-        min-height: 74px;
-        line-height: 1.5;
+        transition:
+          border-color 140ms var(--ease),
+          box-shadow 140ms var(--ease);
       }
 
       input:focus,
       select:focus,
       textarea:focus {
-        border-color: var(--accent-hi);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(89, 2, 34, 0.15);
       }
 
-      .row {
-        display: flex;
-        align-items: center;
-        gap: 9px;
+      textarea {
+        resize: vertical;
+        min-height: 92px;
+        line-height: 1.55;
       }
 
-      .row input[type='checkbox'] {
-        width: 15px;
-        height: 15px;
-        flex-shrink: 0;
-        accent-color: var(--accent);
+      .field {
+        margin-bottom: 18px;
+        max-width: 560px;
       }
 
-      .row label {
-        margin: 0;
-        color: var(--text);
-        font-weight: 400;
-        font-size: 13.5px;
+      .field > label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+
+      .hint {
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--ink-3);
       }
 
       .with-button {
@@ -298,129 +962,1119 @@
         gap: 8px;
       }
 
-      .hint {
-        font-size: 11.5px;
-        color: var(--faint);
-        margin-top: 6px;
-        line-height: 1.45;
-      }
-
-      button {
-        padding: 9px 16px;
-        border: none;
-        border-radius: 8px;
-        background: var(--accent);
-        color: #fff;
-        font-family: inherit;
-        font-size: 13.5px;
-        font-weight: 500;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-
-      button:hover:not(:disabled) {
-        background: var(--accent-hi);
-      }
-
-      button:disabled {
-        opacity: 0.5;
-        cursor: default;
-      }
-
-      button.ghost {
-        background: #2a2a31;
-        color: #d4d4d8;
-      }
-
-      button.ghost:hover:not(:disabled) {
-        background: #34343d;
-      }
-
-      button.small {
-        padding: 4px 10px;
-        font-size: 11.5px;
-        border-radius: 6px;
-      }
-
-      button.danger {
-        background: none;
-        color: var(--err);
-        padding: 4px 8px;
-        font-size: 11.5px;
-      }
-
-      button.danger:hover:not(:disabled) {
-        background: rgba(248, 113, 113, 0.12);
-      }
-
       .msg {
-        font-size: 12px;
+        margin-top: 7px;
+        font-size: 12.5px;
         line-height: 1.45;
-        margin-top: 6px;
+        min-height: 1px;
       }
 
       .msg.ok {
         color: var(--ok);
       }
-
       .msg.warn {
         color: var(--warn);
       }
-
       .msg.err {
         color: var(--err);
       }
 
-      /* ---------- Level meter ---------- */
+      /* ---------------------------------------------------- settings modal
+         Two columns: a sub-nav of sections on the left with the version pinned
+         to its bottom, and one card of rows on the right. Each row is a label
+         and a sentence explaining it, with its control on the right edge — so
+         the column of controls lines up and the eye can run down it. */
+
+      #settingsModal {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 28px;
+      }
+
+      /* The one scrim in the app, and it is a tint rather than a curtain: what you were
+         reading stays legible behind it, which is the difference between a dialog over your
+         work and a screen that replaced it. */
+      .modal-scrim {
+        position: absolute;
+        inset: 0;
+        background: rgba(89, 2, 34, 0.1);
+        backdrop-filter: blur(2px);
+        animation: fadeIn 180ms linear both;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+      }
+
+      .modal-panel {
+        position: relative;
+        display: flex;
+        width: min(940px, 100%);
+        height: min(600px, 100%);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--paper);
+        overflow: hidden;
+        /* The brand allows exactly one shadow, for something genuinely floating. A modal
+           over the window is what it was reserved for. */
+        box-shadow: 0 8px 32px rgba(89, 2, 34, 0.16);
+        animation: modalIn 220ms var(--ease) both;
+      }
+
+      @keyframes modalIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px) scale(0.99);
+        }
+      }
+
+      .modal-nav {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        width: 226px;
+        padding: 22px 14px 14px;
+        border-right: 1px solid var(--line);
+        background: var(--card);
+      }
+
+      .modal-nav-group {
+        padding: 0 8px 8px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.9px;
+        text-transform: uppercase;
+        color: var(--ink-4);
+      }
+
+      .modal-nav-group:not(:first-child) {
+        margin-top: 20px;
+      }
+
+      .modal-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        padding: 7px 9px;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: none;
+        color: var(--ink-2);
+        font: inherit;
+        font-size: 13.5px;
+        text-align: left;
+        cursor: pointer;
+        transition:
+          background-color 140ms var(--ease),
+          color 140ms var(--ease);
+      }
+
+      .modal-nav-item:hover {
+        background: var(--active);
+        color: var(--ink);
+      }
+
+      .modal-nav-item.on {
+        background: var(--active);
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .modal-nav-item svg {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        opacity: 0.85;
+      }
+
+      .modal-foot {
+        margin-top: auto;
+        padding: 12px 8px 0;
+        border-top: 1px solid var(--line);
+        font-size: 11.5px;
+        color: var(--ink-4);
+      }
+
+      .modal-foot-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .modal-foot-row span {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .modal-foot .msg {
+        margin-top: 4px;
+        font-size: 11.5px;
+      }
+
+      .modal-main {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        padding: 26px 30px 30px;
+        overflow-y: auto;
+      }
+
+      .modal-close {
+        position: absolute;
+        top: 16px;
+        right: 18px;
+      }
+
+      .modal-pane {
+        display: none;
+        animation: viewIn 220ms var(--ease) both;
+      }
+
+      .modal-pane.on {
+        display: block;
+      }
+
+      .modal-pane h2 {
+        margin-bottom: 20px;
+        font-family: var(--font-display);
+        font-size: 24px;
+        font-weight: 500;
+        letter-spacing: -0.4px;
+      }
+
+      .rows {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--card);
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 16px 18px;
+        border-top: 1px solid var(--line);
+      }
+
+      .row:first-child {
+        border-top: none;
+      }
+
+      .row-text {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .row-text b {
+        display: block;
+        font-family: var(--font-display);
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 3px;
+      }
+
+      .row-text > span {
+        display: block;
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--ink-3);
+      }
+
+      /* The controls column: everything in it is right-aligned and the same width, so the
+         rows read as a list of settings rather than as four unrelated widgets. */
+      .row-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .row-control select,
+      .row-control input[type='text'] {
+        width: 200px;
+      }
+
+      /* The destructive action is a text button everywhere else in the app, where it sits
+         under the thing it deletes. In the controls column it needs an edge, or it reads as
+         a stray word rather than as the button in that row. */
+      .row-control .btn.danger {
+        border-color: var(--line-strong);
+      }
+
+      .row .meter {
+        margin-top: 10px;
+      }
+
+      .row .msg {
+        margin-top: 4px;
+      }
+
+      /* A row that reads as one tappable setting, like the toggles in the screenshot. */
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 13px 2px;
+        border-bottom: 1px solid var(--line);
+        max-width: 560px;
+      }
+
+      .toggle-row:last-of-type {
+        border-bottom: none;
+      }
+
+      .toggle-row .label {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .toggle-row .label b {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 600;
+      }
+
+      .toggle-row .label span {
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+
+      /* iOS-style switch, because a bare checkbox on a warm background looks unfinished. */
+      .switch {
+        position: relative;
+        flex-shrink: 0;
+        width: 40px;
+        height: 23px;
+      }
+
+      .switch input {
+        position: absolute;
+        opacity: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        cursor: pointer;
+      }
+
+      .switch .track {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: var(--line-strong);
+        transition: background-color 180ms var(--ease);
+        pointer-events: none;
+      }
+
+      .switch .track::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 17px;
+        height: 17px;
+        border-radius: 50%;
+        /* A hairline ring rather than a drop shadow: the knob needs an edge, not
+           depth, and it has to stay legible once the track goes ink on. */
+        background: var(--paper);
+        box-shadow: 0 0 0 1px rgba(58, 1, 22, 0.14);
+        transition: transform 180ms var(--ease);
+      }
+
+      .switch input:checked + .track {
+        background: var(--accent);
+      }
+
+      .switch input:checked + .track::after {
+        transform: translateX(17px);
+      }
+
+      .switch input:focus-visible + .track {
+        box-shadow: 0 0 0 3px rgba(89, 2, 34, 0.28);
+      }
+
+      /* ------------------------------------------------------- level meter */
+
       .meter {
         display: flex;
         align-items: flex-end;
-        gap: 2px;
-        height: 22px;
-        padding: 0 2px;
+        gap: 3px;
+        height: 26px;
+        margin-top: 12px;
       }
 
       .meter i {
         width: 4px;
         height: 3px;
         border-radius: 2px;
-        background: #3a3a44;
+        background: var(--line-strong);
         transition:
           height 70ms linear,
           background-color 70ms linear;
       }
 
+      /* --live, not --ok: a lit bar means "sound is arriving right now", which is
+         the one thing that colour is for. Green would read as "the device passed
+         a test", and the meter is not a test. */
       .meter i.lit {
-        background: var(--ok);
+        background: var(--live);
       }
 
-      hr {
-        border: none;
-        border-top: 1px solid var(--line);
-        margin: 16px 0;
-        max-width: 520px;
-      }
+      /* ------------------------------------------------------ tone choices */
 
-      /* ---------- Welcome ---------- */
-      .step {
+      .choices {
         display: flex;
-        gap: 12px;
-        margin-bottom: 24px;
-        max-width: 560px;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
       }
 
-      .step-num {
+      .choice {
+        position: relative;
+        flex: 1 1 168px;
+        padding: 13px 14px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--card);
+        cursor: pointer;
+        transition:
+          border-color 150ms var(--ease),
+          background-color 150ms var(--ease),
+          transform 150ms var(--ease);
+      }
+
+      .choice:hover {
+        transform: translateY(-1px);
+      }
+
+      .choice input {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .choice b {
+        display: block;
+        font-size: 13.5px;
+        margin-bottom: 3px;
+      }
+
+      .choice span {
+        font-size: 12px;
+        color: var(--ink-3);
+        line-height: 1.45;
+      }
+
+      .choice.on {
+        border-color: var(--accent);
+        background: var(--card-2);
+      }
+
+      .preview {
+        margin-top: 4px;
+        padding: 14px 16px;
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--card-2);
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--ink);
+        transition: opacity 160ms linear;
+      }
+
+      /* ----------------------------------------------------------- insights
+
+         A dashboard rather than a row of numbers: the "Foydalanish" tab answers
+         how much and when, "Ovozingiz" answers how you sound. Every figure on
+         both is arithmetic over history.json — there is no analytics service
+         behind any of it, which is also why nothing here compares the user to
+         anyone else. We have a sample size of one and it is them. */
+
+      .tabs {
+        display: flex;
+        gap: 22px;
         flex-shrink: 0;
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        background: var(--accent);
-        color: #fff;
-        font-size: 12.5px;
+        margin: -6px 4px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tab {
+        position: relative;
+        padding: 0 0 9px;
+        border: 0;
+        background: none;
+        font: inherit;
+        font-size: 13.5px;
+        color: var(--ink-4);
+        cursor: pointer;
+        transition: color 140ms var(--ease);
+      }
+
+      .tab:hover {
+        color: var(--ink-2);
+      }
+
+      .tab.on {
+        color: var(--ink);
         font-weight: 600;
+      }
+
+      /* -1px so the marker sits *on* the group's hairline rather than above it. */
+      .tab.on::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -1px;
+        height: 2px;
+        border-radius: 2px;
+        background: var(--accent);
+      }
+
+      .tab-pane {
+        display: none;
+      }
+
+      .tab-pane.on {
+        display: block;
+        animation: viewIn 220ms var(--ease) both;
+      }
+
+      /* Three tracks, the last one double: the two figures on the left are a single
+         number each, the card on the right carries a number *and* a breakdown. */
+      .insight-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 2fr;
+        gap: 14px;
+        margin-bottom: 14px;
+      }
+
+      .insight-grid.pair {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .insight-grid .span2 {
+        grid-column: 1 / -1;
+      }
+
+      /* The window can be as narrow as 880px, and it can also lose its sidebar; two
+         columns is the widest arrangement that still fits a breakdown row legibly. */
+      @media (max-width: 1000px) {
+        .insight-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .insight-grid .wide {
+          grid-column: 1 / -1;
+        }
+      }
+
+      .metric {
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+      }
+
+      .metric-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .figure {
+        display: block;
+        font-size: 30px;
+        letter-spacing: -1px;
+        line-height: 1.1;
+        font-variant-numeric: lining-nums tabular-nums;
+      }
+
+      /* "2 soat 16 daq" is a figure too, and at 30px it wraps and shoves the card out of
+         line with its neighbours. One step down rather than an ellipsis: the whole point
+         of the number is that you can read it. */
+      .figure.long {
+        font-size: 22px;
+        letter-spacing: -0.4px;
+      }
+
+      .metric-label {
+        display: block;
+        margin-top: 3px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.9px;
+        text-transform: uppercase;
+        color: var(--ink-4);
+      }
+
+      /* The month-over-month pill. Ink on cream like everything else — a green "up"
+         and a red "down" would be the window's fourth and fifth hues, and dictating
+         less this month is not an error state. */
+      .delta {
+        flex-shrink: 0;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: var(--card-2);
+        border: 1px solid var(--line-strong);
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+
+      .metric-rows {
+        margin-top: 14px;
+        border-top: 1px solid var(--line);
+      }
+
+      .metric-row {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        padding: 9px 0 0;
+        font-size: 12.5px;
+        color: var(--ink-3);
+      }
+
+      .metric-row b {
+        font-size: 14.5px;
+        font-weight: 600;
+        color: var(--ink);
+        font-variant-numeric: lining-nums tabular-nums;
+      }
+
+      .metric-row .trail {
+        margin-left: auto;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* -------------------------------------------------------- gauge (wpm) */
+
+      .gauge {
+        position: relative;
+        margin: auto auto 0;
+        padding-top: 12px;
+        width: 100%;
+        max-width: 176px;
+      }
+
+      .gauge svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      .gauge .track {
+        stroke: var(--line);
+      }
+
+      .gauge .fill {
+        stroke: var(--accent);
+        animation: gaugeIn 700ms var(--ease) both;
+      }
+
+      @keyframes gaugeIn {
+        from {
+          stroke-dashoffset: var(--dash-len);
+        }
+      }
+
+      /* Inside the arc, not beside it: the arc is the frame for its own caption. */
+      .gauge .cap {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 4px;
+        text-align: center;
+        line-height: 1.25;
+      }
+
+      .gauge .cap span {
+        display: block;
+        font-size: 11px;
+        color: var(--ink-4);
+      }
+
+      .gauge .cap b {
+        font-family: var(--font-display);
+        font-size: 16px;
+        font-weight: 600;
+        font-variant-numeric: lining-nums tabular-nums;
+      }
+
+      /* ------------------------------------------------------------- panels */
+
+      .panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .panel-head h2 {
+        font-size: 21px;
+        letter-spacing: -0.5px;
+      }
+
+      .head-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .panel-note {
+        flex-shrink: 0;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.9px;
+        text-transform: uppercase;
+        color: var(--ink-4);
+        white-space: nowrap;
+      }
+
+      .panel-note b {
+        color: var(--ink-2);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ------------------------------------------------- usage breakdown bars */
+
+      .usage-row {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 5px 0;
+        color: var(--ink-3);
+      }
+
+      .usage-row .ico {
+        flex-shrink: 0;
+        color: var(--ink-4);
+        display: flex;
+      }
+
+      /* The bars share one track so their lengths are comparable at a glance; the label
+         starts where each bar ends, which is what makes a quiet part of the day read as
+         quiet without needing to compare two numbers. */
+      .usage-row .barwrap {
+        flex: 0 0 52%;
+        min-width: 0;
+      }
+
+      /* The bar is the percentage: a share small enough that its own label would not
+         fit still draws a chip wide enough to read, which is why the minimum width
+         is on the bar and the label sits outside it. */
+      .usage-row .bar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-shrink: 0;
+        min-width: 40px;
+        height: 26px;
+        padding: 0 8px;
+        border-radius: 7px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-size: 11.5px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        transition: width 420ms var(--ease);
+      }
+
+      .usage-row.quiet .bar {
+        background: var(--line);
+        color: var(--ink-3);
+      }
+
+      .usage-row .what {
+        font-size: 11.5px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* --------------------------------------------------------- heat map */
+
+      .heat {
+        display: grid;
+        grid-template-columns: 26px 1fr;
+        gap: 4px;
+      }
+
+      /* Three areas, placed rather than flowed: the month strip has to sit over the cells
+         and the weekday labels beside them, and auto-placement would only do that by
+         accident. Both grids carry the same column count and gap, so a label named for a
+         week lands on that week. */
+      .heat .months {
+        grid-row: 1;
+        grid-column: 2;
+        display: grid;
+        gap: 4px;
+        margin-bottom: 3px;
+        font-size: 11px;
+        color: var(--ink-4);
+      }
+
+      .heat .months span {
+        grid-row: 1;
+        white-space: nowrap;
+      }
+
+      .heat .days {
+        grid-row: 2;
+        grid-column: 1;
+        display: grid;
+        grid-template-rows: repeat(7, 1fr);
+        gap: 4px;
+        font-size: 10px;
+        color: var(--ink-4);
+        text-align: right;
+        padding-right: 2px;
+      }
+
+      .heat .days span {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+      }
+
+      /* Columns are 1fr with square cells rather than a fixed cell size: the card is
+         half of a window that resizes, and a fixed grid would either overflow it or
+         leave a gap. */
+      .heat .cells {
+        grid-row: 2;
+        grid-column: 2;
+        display: grid;
+        grid-template-rows: repeat(7, 1fr);
+        grid-auto-flow: column;
+        gap: 4px;
+      }
+
+      .heat .cells i {
+        aspect-ratio: 1;
+        border-radius: 3px;
+        background: var(--line);
+      }
+
+      /* Four steps along the one line this window has — ink mixed into paper — rather
+         than four colours. Written as color-mix so the ramp cannot drift off that line
+         when the brand is retuned. */
+      .heat .cells i.l1,
+      .heat-legend i.l1 {
+        background: color-mix(in srgb, var(--accent) 18%, var(--paper));
+      }
+
+      .heat .cells i.l2,
+      .heat-legend i.l2 {
+        background: color-mix(in srgb, var(--accent) 40%, var(--paper));
+      }
+
+      .heat .cells i.l3,
+      .heat-legend i.l3 {
+        background: color-mix(in srgb, var(--accent) 68%, var(--paper));
+      }
+
+      .heat .cells i.l4,
+      .heat-legend i.l4 {
+        background: var(--accent);
+      }
+
+      /* Days that have not happened yet are absent, not empty. */
+      .heat .cells i.future {
+        background: transparent;
+      }
+
+      .heat .cells i.streak {
+        outline: 1.5px solid var(--ink-2);
+        outline-offset: 1px;
+      }
+
+      .heat-nav {
+        display: flex;
+        gap: 2px;
+      }
+
+      .heat-nav button {
         display: flex;
         align-items: center;
         justify-content: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: none;
+        color: var(--ink-4);
+        cursor: pointer;
+        transition: background 140ms var(--ease);
+      }
+
+      .heat-nav button:hover:not(:disabled) {
+        background: var(--card-2);
+        color: var(--ink);
+      }
+
+      .heat-nav button:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+
+      .heat-legend {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 12px;
+        font-size: 11px;
+        color: var(--ink-4);
+      }
+
+      .heat-legend i {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+      }
+
+      .heat-legend .spacer {
+        margin-left: auto;
+      }
+
+      .heat-legend .streak-key {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+        outline: 1.5px solid var(--ink-2);
+        outline-offset: 1px;
+      }
+
+      /* ---------------------------------------------------------- top words */
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .chip {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        padding: 5px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        background: var(--card-2);
+        font-size: 12.5px;
+      }
+
+      .chip b {
+        font-weight: 600;
+      }
+
+      .chip span {
+        font-size: 11px;
+        color: var(--ink-4);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .insight-empty {
+        padding: 26px 4px;
+        text-align: center;
+        font-size: 13px;
+        color: var(--ink-4);
+      }
+
+      /* The bars are SVG geometry, not boxes — see renderChart() for why. */
+      #chart svg {
+        display: block;
+        overflow: visible;
+      }
+
+      #chart .bar {
+        fill: var(--accent);
+        transform-origin: bottom;
+        animation: barIn 420ms var(--ease) both;
+        transition: fill 140ms var(--ease);
+      }
+
+      #chart .bar.empty {
+        fill: var(--line);
+      }
+
+      #chart svg:hover .bar {
+        fill: var(--accent-hi);
+      }
+
+      #chart svg:hover .bar.empty {
+        fill: var(--line-strong);
+      }
+
+      /* scaleY on an SVG rect scales about the element's own box, so the growth reads as
+         rising from the axis only with the origin pinned to the bottom of the chart. */
+      @keyframes barIn {
+        from {
+          transform: scaleY(0.05);
+          opacity: 0.35;
+        }
+      }
+
+      #chart .labels {
+        display: flex;
+        margin-top: 8px;
+      }
+
+      #chart .labels div {
+        flex: 1;
+        text-align: center;
+        font-size: 10.5px;
+        color: var(--ink-4);
+        white-space: nowrap;
+      }
+
+      /* --------------------------------------------------------- scratchpad */
+
+      #scratchpadText {
+        flex: 1;
+        min-height: 0;
+        resize: none;
+        border-radius: var(--radius);
+        padding: 18px 20px;
+        font-size: 15px;
+        line-height: 1.65;
+      }
+
+      /* --------------------------------------------------------------- help */
+
+      .help-item {
+        padding: 14px 16px;
+        border-top: 1px solid var(--line);
+      }
+
+      .help-item:first-child {
+        border-top: none;
+      }
+
+      .help-item b {
+        display: block;
+        font-size: 13.5px;
+        margin-bottom: 4px;
+      }
+
+      .help-item p {
+        font-size: 13px;
+        color: var(--ink-2);
+        line-height: 1.6;
+      }
+
+      .path {
+        display: block;
+        margin-top: 6px;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        color: var(--ink-3);
+        overflow-wrap: anywhere;
+      }
+
+      /* ------------------------------------------------------------ welcome */
+
+      #welcome {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        background: var(--paper);
+        animation: viewIn 320ms var(--ease) both;
+      }
+
+      #welcomeDrag {
+        height: 44px;
+        flex-shrink: 0;
+        -webkit-app-region: drag;
+      }
+
+      #welcomeBody {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        justify-content: center;
+        padding: 8px 24px 24px;
+      }
+
+      #welcomeInner {
+        width: 100%;
+        max-width: 520px;
+      }
+
+      /* No tile behind it: the mark is drawn to be read as a line on paper, and a box around
+         it at this size adds an edge the artwork doesn't have. */
+      .w-mark {
+        display: block;
+        width: 132px;
+        height: auto;
+        margin-bottom: 22px;
+        animation: markIn 500ms var(--ease) both;
+      }
+
+      @keyframes markIn {
+        from {
+          opacity: 0;
+          transform: scale(0.9);
+        }
+      }
+
+      #welcomeInner h1 {
+        font-size: 27px;
+      }
+
+      #welcomeInner > p {
+        margin: 8px 0 26px;
+        font-size: 14px;
+        color: var(--ink-2);
+        line-height: 1.6;
+      }
+
+      .step {
+        display: flex;
+        gap: 13px;
+        margin-bottom: 22px;
+        animation: rowIn 420ms var(--ease) both;
+      }
+
+      .step:nth-child(2) {
+        animation-delay: 60ms;
+      }
+      .step:nth-child(3) {
+        animation-delay: 120ms;
+      }
+      .step:nth-child(4) {
+        animation-delay: 180ms;
+      }
+
+      .step-num {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        /* Outlined, not filled. Four ink discs down the left of the welcome
+           screen would be four filled blocks competing with each other and with
+           the one button that actually finishes setup. */
+        border: 1.5px solid var(--accent);
+        color: var(--accent);
+        font-size: 12.5px;
+        font-weight: 700;
       }
 
       .step-body {
@@ -428,76 +2082,563 @@
         min-width: 0;
       }
 
-      .step h3 {
-        font-size: 13.5px;
+      .step-body h3 {
+        font-size: 14.5px;
         font-weight: 600;
-        margin-bottom: 3px;
+        margin-bottom: 4px;
       }
 
-      #welcomeHead {
-        margin-bottom: 22px;
+      .step-body p {
+        font-size: 13px;
+        color: var(--ink-2);
+        line-height: 1.55;
       }
 
-      #welcomeHead h2 {
-        font-size: 18px;
+      .step-body .field {
+        margin: 12px 0 0;
       }
 
-      footer.bar {
+      #welcomeFoot {
         display: flex;
         align-items: center;
         gap: 12px;
         flex-shrink: 0;
-        padding: 12px 16px;
+        padding: 14px 24px;
         border-top: 1px solid var(--line);
+      }
+
+      /* ------------------------------------------------------------- toast */
+
+      #toast {
+        position: fixed;
+        left: 50%;
+        bottom: 26px;
+        z-index: 30;
+        padding: 9px 16px;
+        border-radius: 999px;
+        background: var(--ink);
+        color: var(--paper);
+        font-size: 13px;
+        font-weight: 500;
+        /* The one shadow in this file, and it is ink-tinted rather than black —
+           a neutral shadow over cream greys the paper around it. */
+        box-shadow: 0 8px 32px rgba(89, 2, 34, 0.24);
+        opacity: 0;
+        transform: translate(-50%, 12px);
+        pointer-events: none;
+        transition:
+          opacity 180ms var(--ease),
+          transform 220ms var(--ease);
+      }
+
+      #toast.on {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+
+      /* Everything above is decoration; none of it should move for someone who
+         asked their system not to animate. */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          animation-delay: 0ms !important;
+          transition-duration: 0.001ms !important;
+        }
       }
     </style>
   </head>
   <body>
-    <nav id="tabs" class="hidden">
-      <button data-tab="history">Tarix</button>
-      <button data-tab="settings">Sozlamalar</button>
+    <!-- ============================== title bar ============================== -->
+    <header id="titlebar">
+      <button id="toggleSidebar" class="icon-btn" title="Yon panelni yashirish">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <rect x="3" y="4" width="18" height="16" rx="2.5" />
+          <path d="M9.5 4v16" />
+        </svg>
+      </button>
       <span class="spacer"></span>
-      <span id="version"></span>
-    </nav>
+      <button id="openSettingsTop" class="icon-btn" title="Sozlamalar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="12" r="3.2" />
+          <path
+            d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.51-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1.03z"
+          />
+        </svg>
+      </button>
+      <div id="winControls">
+        <button class="win-btn" id="winMin" title="Kichraytirish">
+          <svg viewBox="0 0 12 12">
+            <rect x="1" y="5.5" width="10" height="1" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="win-btn" id="winMax" title="Kattalashtirish">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1">
+            <rect x="1.5" y="1.5" width="9" height="9" rx="1" />
+          </svg>
+        </button>
+        <button class="win-btn close" id="winClose" title="Yopish">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2">
+            <path d="M1.5 1.5l9 9M10.5 1.5l-9 9" />
+          </svg>
+        </button>
+      </div>
+    </header>
 
-    <main>
-      <!-- ---------------- First run ---------------- -->
-      <section id="view-welcome" class="view hidden">
-        <div class="scroll">
-          <div id="welcomeHead">
-            <h2>Whisper UZ ga xush kelibsiz</h2>
-            <p class="sub">
-              Uch qadam — keyin xohlagan dasturda <span class="kbd">Ctrl</span> +
-              <span class="kbd">Caps Lock</span> bosib gapirasiz, matn kursor turgan joyga
-              yoziladi.
+    <div id="body">
+      <!-- ============================== sidebar ============================== -->
+      <aside id="sidebar">
+        <div id="brand">
+          <!-- The artwork itself (src/renderer/assets/logo.png, trimmed from LOGO.png by
+               scripts/make-icons.mjs) rather than a redrawn approximation of it. 44px wide is
+               the size at which the waveform inside the mouth still reads as a waveform. -->
+          <img class="mark" src="../assets/logo.png" alt="gapir me" />
+          <span class="name">gapir</span>
+          <span class="badge">me</span>
+        </div>
+
+        <nav id="nav"></nav>
+
+        <div id="sidebarBottom">
+          <nav id="navBottom"></nav>
+        </div>
+      </aside>
+
+      <!-- ============================== content ============================== -->
+      <main id="content">
+        <!-- ---------------------------- dictation ---------------------------- -->
+        <section class="view" data-view="dictation">
+          <div class="view-head">
+            <h1 id="greeting">Xush kelibsiz</h1>
+            <p>
+              Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> ni bosib turib gapiring —
+              qo‘yib yuborganingizda matn kursor turgan joyga yoziladi.
             </p>
           </div>
+          <div class="columns">
+            <div class="col-main">
+              <div class="card" id="dictationCard">
+                <div class="group-head">
+                  <span>Tarix</span>
+                  <div id="searchWrap">
+                    <input id="search" type="text" placeholder="Izlash…" autocomplete="off" />
+                    <button id="searchBtn" class="icon-btn" title="Izlash">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+                        <circle cx="11" cy="11" r="7" />
+                        <path d="M20 20l-3.6-3.6" stroke-linecap="round" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="scroll" id="entries"></div>
+              </div>
+            </div>
 
+            <div class="rail">
+              <div class="card pad" id="railStats"></div>
+              <!-- The hotkey, spelled out where the eye lands after the numbers. It is the
+                   only thing anyone has to learn to use this app, and someone who opened the
+                   window to read their history is exactly who has forgotten it. -->
+              <div class="card pad hotkey-card">
+                <h4>Diktovka tugmalari</h4>
+                <p><kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd></p>
+                <span>Bosib turing va gapiring</span>
+                <p><kbd>Esc</kbd></p>
+                <span>Bekor qilish</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------------------------- insights ----------------------------- -->
+        <section class="view" data-view="insights">
+          <div class="view-head">
+            <h1>Statistika</h1>
+            <p>Hammasi shu kompyuterdagi tarixdan hisoblanadi — hech qayerga yuborilmaydi.</p>
+          </div>
+          <div class="tabs" role="tablist" id="insightTabs">
+            <button class="tab on" data-tab="usage" role="tab" aria-selected="true">
+              Foydalanish
+            </button>
+            <button class="tab" data-tab="voice" role="tab" aria-selected="false">Ovozingiz</button>
+          </div>
+          <div class="scroll">
+            <!-- Foydalanish: how much, and when. -->
+            <div class="tab-pane on" data-tab="usage">
+              <div class="insight-grid">
+                <div class="card pad metric">
+                  <b class="figure" id="statWpm">0</b>
+                  <span class="metric-label">So‘z / daqiqa</span>
+                  <div class="gauge" id="wpmGauge"></div>
+                </div>
+
+                <div class="card pad metric">
+                  <b class="figure" id="statSaved">0</b>
+                  <span class="metric-label">Yozish o‘rniga tejaldi</span>
+                  <div class="metric-rows">
+                    <div class="metric-row">
+                      <b id="statDictations">0</b><span>diktovka qilingan</span>
+                    </div>
+                    <div class="metric-row">
+                      <b id="statAvgWords">0</b><span>o‘rtacha so‘z, har birida</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="card pad metric wide">
+                  <div class="metric-top">
+                    <b class="figure" id="statWords">0</b>
+                    <span class="delta" id="statDelta" hidden></span>
+                  </div>
+                  <span class="metric-label">Jami aytilgan so‘z</span>
+                  <div class="metric-rows" id="statLangs"></div>
+                </div>
+              </div>
+
+              <div class="insight-grid pair">
+                <div class="card pad">
+                  <div class="panel-head">
+                    <h2>Kun tartibi</h2>
+                    <span class="panel-note">Jami diktovka | <b id="rhythmTotal">0</b></span>
+                  </div>
+                  <div id="rhythmRows"></div>
+                </div>
+
+                <div class="card pad">
+                  <div class="panel-head">
+                    <h2 id="streakTitle">0 kun ketma-ket</h2>
+                    <div class="head-right">
+                      <span class="panel-note">Eng uzun | <b id="streakBest">0</b> kun</span>
+                      <div class="heat-nav">
+                        <button id="heatPrev" title="Oldingi oylar" aria-label="Oldingi oylar">
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="15"
+                            height="15"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.9"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M14.5 5.5 8 12l6.5 6.5" />
+                          </svg>
+                        </button>
+                        <button id="heatNext" title="Keyingi oylar" aria-label="Keyingi oylar">
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="15"
+                            height="15"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.9"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M9.5 5.5 16 12l-6.5 6.5" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="heat" id="heatmap"></div>
+                  <div class="heat-legend">
+                    <span>Ko‘p</span>
+                    <i class="l4"></i>
+                    <i class="l3"></i>
+                    <i class="l2"></i>
+                    <i class="l1"></i>
+                    <span>Kam</span>
+                    <span class="spacer"></span>
+                    <i class="streak-key"></i>
+                    <span>Joriy seriya</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Ovozingiz: how you sound while doing it. -->
+            <div class="tab-pane" data-tab="voice">
+              <div class="insight-grid pair">
+                <div class="card pad span2">
+                  <div class="panel-head">
+                    <h2>So‘nggi 14 kun</h2>
+                    <span class="panel-note">So‘z / kun</span>
+                  </div>
+                  <div id="chart"></div>
+                </div>
+
+                <div class="card pad">
+                  <div class="panel-head"><h2>Gapirish odati</h2></div>
+                  <div id="voiceRows"></div>
+                </div>
+
+                <div class="card pad">
+                  <div class="panel-head">
+                    <h2>Ko‘p ishlatilgan so‘zlar</h2>
+                  </div>
+                  <div class="chips" id="topWords"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ------------------------------ style ------------------------------ -->
+        <section class="view" data-view="style">
+          <div class="view-head">
+            <h1>Uslub</h1>
+            <p>Matn qanday yozilishi kerak. O‘zgarishlar keyingi diktovkadan boshlab ishlaydi.</p>
+          </div>
+          <div class="scroll">
+            <div class="field" style="max-width: 100%">
+              <label>Ohang</label>
+              <div class="choices" id="toneChoices">
+                <label class="choice" data-tone="verbatim">
+                  <input type="radio" name="tone" value="verbatim" />
+                  <b>Aynan</b>
+                  <span>Nima aytilgan bo‘lsa, o‘shani yozadi. Hech narsa tuzatilmaydi.</span>
+                </label>
+                <label class="choice" data-tone="tidy">
+                  <input type="radio" name="tone" value="tidy" />
+                  <b>Tozalangan</b>
+                  <span>Duduqlanish va takrorlangan so‘zlar olib tashlanadi.</span>
+                </label>
+                <label class="choice" data-tone="formal">
+                  <input type="radio" name="tone" value="formal" />
+                  <b>Rasmiy</b>
+                  <span>Yozma nutq uslubiga o‘tkaziladi, ma’no saqlanadi.</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="toggle-row">
+              <div class="label">
+                <b>«Eee», «mmm» kabi tovushlar olib tashlansin</b>
+                <span>Nafas olish va o‘ylash tovushlari yozilmaydi.</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="styleFillers" />
+                <span class="track"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div class="label">
+                <b>Tinish belgilari va bosh harflar</b>
+                <span>O‘chirilsa — hammasi kichik harflarda, nuqtasiz yoziladi.</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="stylePunctuation" />
+                <span class="track"></span>
+              </label>
+            </div>
+
+            <div class="field" style="margin-top: 22px">
+              <label>Namuna</label>
+              <div class="preview" id="stylePreview"></div>
+              <p class="hint">
+                Bir xil gap tanlangan uslubda qanday yozilishini ko‘rsatadi — bu yozib olingan
+                namuna, jonli diktovka emas.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- --------------------------- scratchpad ---------------------------- -->
+        <section class="view" data-view="scratchpad">
+          <div class="view-head">
+            <h1>Qaydlar</h1>
+            <p>
+              Diktovka qilingan matnni shu yerga aytib qo‘ying. Bosing va
+              <kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> — o‘zgarishlar avtomatik saqlanadi.
+            </p>
+          </div>
+          <textarea id="scratchpadText" placeholder="Bu yerga gapiring yoki yozing…"></textarea>
+          <p class="hint" id="scratchpadMsg" style="flex-shrink: 0"></p>
+        </section>
+
+        <!-- ----------------------------- account ----------------------------- -->
+        <section class="view" data-view="account">
+          <div class="view-head">
+            <h1>Hisob</h1>
+            <p>Diktovka ilovaning serveri orqali ishlaydi — shuning uchun kirish kerak.</p>
+          </div>
+          <div class="scroll">
+            <!-- Signed out. Deliberately the whole pane rather than a banner: without an
+                 account nothing else on this screen has a value to show. -->
+            <div class="card acc-empty" id="accountSignedOut">
+              <h2>Google bilan kiring</h2>
+              <p>
+                Kirgandan so‘ng har kuni bepul diktovka qilish mumkin. Brauzer ochiladi — parolni
+                shu yerga emas, Google’ning o‘z sahifasiga kiritasiz.
+              </p>
+              <button class="btn" id="accSignIn">
+                <svg class="g-mark" viewBox="0 0 48 48" aria-hidden="true">
+                  <path
+                    fill="#4285F4"
+                    d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"
+                  />
+                </svg>
+                Google bilan kirish
+              </button>
+              <p class="msg" id="accMsg" style="margin: 0"></p>
+            </div>
+
+            <!-- Signed in. Two cards: who you are, and what you are entitled to. -->
+            <div id="accountSignedIn" class="hidden">
+              <div class="card acc-identity">
+                <div class="acc-avatar" id="accAvatar" aria-hidden="true"></div>
+                <div class="acc-who">
+                  <b id="accName">—</b>
+                  <span id="accEmail"></span>
+                </div>
+              </div>
+
+              <div class="card acc-plan" style="margin-top: 14px">
+                <div class="acc-plan-head">
+                  <b id="accPlanName">Bepul</b>
+                  <span class="badge" id="accPlanBadge">Free</span>
+                </div>
+                <div class="acc-bar"><i id="accBarFill"></i></div>
+                <p class="hint" id="accUsage" style="margin: 0">Yuklanmoqda…</p>
+                <p class="hint" id="accExpires" style="margin: 0"></p>
+                <div class="acc-actions">
+                  <button class="btn" id="accUpgrade">Pro’ga o‘tish</button>
+                  <button class="btn ghost small" id="accRefresh">Yangilash</button>
+                  <button class="btn ghost small" id="accSignOut">Chiqish</button>
+                </div>
+                <p class="msg" id="accPlanMsg" style="margin: 0"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ------------------------------ help ------------------------------- -->
+        <section class="view" data-view="help">
+          <div class="view-head">
+            <h1>Yordam</h1>
+            <p>Eng ko‘p uchraydigan uchta holat va ular bilan nima qilish kerakligi.</p>
+          </div>
+          <div class="scroll">
+            <div class="card">
+              <div class="help-item">
+                <b>Qanday ishlaydi</b>
+                <p>
+                  Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> ni bosib turing,
+                  gapiring, qo‘yib yuboring. Bekor qilish uchun — <kbd>Esc</kbd>. Matn kursor turgan
+                  joyga qo‘yiladi va tarixga yoziladi.
+                </p>
+              </div>
+              <div class="help-item">
+                <b>Matn chiqmadi</b>
+                <p>
+                  Avval mikrofonni tekshiring: Sozlamalar → Mikrofon → «Tekshirish», gapirganda
+                  chiziqlar qimirlashi kerak. Qimirlamasa, ro‘yxatdan boshqa qurilmani tanlang —
+                  ko‘pincha birinchi qurilma virtual mikrofon bo‘lib chiqadi.
+                </p>
+              </div>
+              <div class="help-item">
+                <b>«Kirish kerak» deb yozdi</b>
+                <p>
+                  Diktovka ilovaning serveri orqali ishlaydi, shuning uchun hisobga kirish kerak.
+                  «Hisob» bo‘limiga o‘tib, Google bilan kiring — bir marta kirsangiz, keyin
+                  o‘zi eslab qoladi.
+                </p>
+              </div>
+              <div class="help-item">
+                <b>«Bugungi limit tugadi» deb yozdi</b>
+                <p>
+                  Har bir hisobning kunlik chegarasi bor. Qancha ishlatganingiz «Hisob»
+                  bo‘limida ko‘rinadi. Chegara har kuni yarim tunda yangilanadi — ertaga hech
+                  narsa qilmasdan yana ishlaydi. Ko‘proq kerak bo‘lsa, Pro’ga o‘tish mumkin.
+                </p>
+              </div>
+              <div class="help-item">
+                <b>Fayllar qayerda</b>
+                <p>
+                  Sozlamalar va tarix shu kompyuterda,
+                  <span class="path" id="helpPath"></span>
+                </p>
+                <button class="btn ghost small" id="openLogs" style="margin-top: 10px">
+                  Manzilni nusxalash
+                </button>
+                <p class="hint">
+                  Papkani ochish uchun: trayda gapir me belgisiga o‘ng tugma → «Loglar papkasi».
+                </p>
+              </div>
+              <div class="help-item">
+                <b>Versiya</b>
+                <p id="helpVersion"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ============================== welcome ============================== -->
+    <section id="welcome" class="hidden">
+      <div id="welcomeDrag"></div>
+      <div id="welcomeBody">
+        <div id="welcomeInner">
+          <!-- The welcome screen is the one place with room to show the mark properly, so it
+               gets it at full size and unboxed — on cream, which is where it is meant to sit. -->
+          <img class="w-mark" src="../assets/logo.png" alt="gapir me" />
+          <h1>gapir me ga xush kelibsiz</h1>
+          <p>
+            To‘rt qadam — keyin xohlagan dasturda gapirasiz, matn o‘zi yoziladi. Diktovka
+            ilovaning serveri orqali ishlaydi, shuning uchun avval hisobga kirasiz.
+          </p>
+
+          <!-- Sign-in is step one because it is the only step the app cannot work without.
+               Name and microphone both have workable defaults; this does not. -->
           <div class="step">
             <div class="step-num">1</div>
             <div class="step-body">
-              <h3>Aisha API kaliti</h3>
-              <p class="sub">
-                Nutqni matnga o‘girish Aisha orqali ishlaydi. To‘lov ishlatganingizcha —
-                daqiqasi 425 so‘m, oylik to‘lov yo‘q.
+              <h3>Hisobga kirish</h3>
+              <p>
+                Brauzer ochiladi. Parolni shu yerga emas, Google’ning o‘z sahifasiga
+                kiritasiz — ilova uni ko‘rmaydi.
               </p>
-              <div class="field" style="margin: 10px 0 0">
-                <div class="with-button">
-                  <input
-                    id="wKey"
-                    type="password"
-                    placeholder="API kalitini qo‘yib qo‘ying"
-                    autocomplete="off"
-                  />
-                  <button id="wKeyTest" class="ghost">Tekshirish</button>
-                </div>
-                <p id="wKeyMsg" class="msg"></p>
-                <p class="hint">
-                  Kalit shu kompyuterda shifrlangan holda saqlanadi.
-                  <button id="wKeyLink" class="small ghost" style="margin-left: 4px">
-                    aisha.group ni ochish
-                  </button>
-                </p>
+              <div class="field">
+                <button class="btn" id="wSignIn">
+                  <svg class="g-mark" viewBox="0 0 48 48" aria-hidden="true">
+                    <path
+                      fill="#4285F4"
+                      d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"
+                    />
+                  </svg>
+                  Google bilan kirish
+                </button>
+                <p class="msg" id="wAuthMsg"></p>
               </div>
             </div>
           </div>
@@ -505,17 +2646,10 @@
           <div class="step">
             <div class="step-num">2</div>
             <div class="step-body">
-              <h3>Mikrofon</h3>
-              <p class="sub">Gapirib ko‘ring — chiziqlar qimirlasa, mikrofon to‘g‘ri tanlangan.</p>
-              <div class="field" style="margin: 10px 0 0">
-                <div class="with-button">
-                  <select id="wDevice">
-                    <option value="">Tizim standarti</option>
-                  </select>
-                  <button id="wMicTest" class="ghost">Tekshirish</button>
-                </div>
-                <div id="wMeter" class="meter" style="margin-top: 10px"></div>
-                <p id="wMicMsg" class="msg"></p>
+              <h3>Ismingiz</h3>
+              <p>Faqat salomlashuv uchun. Bo‘sh qoldirsangiz ham bo‘ladi.</p>
+              <div class="field">
+                <input id="wName" type="text" placeholder="Ismingiz" autocomplete="off" />
               </div>
             </div>
           </div>
@@ -523,112 +2657,315 @@
           <div class="step">
             <div class="step-num">3</div>
             <div class="step-body">
+              <h3>Mikrofon</h3>
+              <p>Gapirib ko‘ring — chiziqlar qimirlasa, mikrofon to‘g‘ri tanlangan.</p>
+              <div class="field">
+                <div class="with-button">
+                  <select id="wDevice">
+                    <option value="">Tizim standarti</option>
+                  </select>
+                  <button class="btn ghost" id="wMicTest">Tekshirish</button>
+                </div>
+                <div class="meter" id="wMeter"></div>
+                <p class="msg" id="wMicMsg"></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-body">
               <h3>Sinab ko‘ring</h3>
-              <p class="sub">
-                Quyidagi maydonni bosing, <span class="kbd">Ctrl</span> +
-                <span class="kbd">Caps Lock</span> ni bosib turib gapiring va qo‘yib yuboring.
-                Chiqib ketish uchun <span class="kbd">Esc</span>.
+              <p>
+                Quyidagi maydonni bosing, <kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> ni bosib turib
+                gapiring va qo‘yib yuboring.
               </p>
-              <div class="field" style="margin: 10px 0 0">
+              <div class="field">
                 <textarea id="wTry" placeholder="Matn shu yerda paydo bo‘ladi…"></textarea>
-                <p class="hint">
-                  Avval 1-qadamdagi kalitni saqlash kerak — pastdagi tugmani bosing.
-                </p>
               </div>
             </div>
           </div>
         </div>
-        <footer class="bar">
-          <button id="wSave">Saqlash va boshlash</button>
-          <span id="wSaveMsg" class="msg"></span>
-        </footer>
-      </section>
+      </div>
+      <footer id="welcomeFoot">
+        <button class="btn" id="wDone">Boshladik</button>
+        <span class="msg" id="wMsg" style="margin: 0"></span>
+      </footer>
+    </section>
 
-      <!-- ---------------- History ---------------- -->
-      <section id="view-history" class="view hidden">
-        <div id="historyBar">
-          <input id="search" type="text" placeholder="Tarixdan izlash…" autocomplete="off" />
-        </div>
-        <div id="entries"></div>
-        <div id="historyFoot">
-          <span class="path" id="historyPath"></span>
-          <button id="clearAll" class="danger">Hammasini o‘chirish</button>
-        </div>
-      </section>
+    <!-- ============================== settings ==============================
+         A modal over the window rather than a seventh pane, and that is the shape the
+         reference has: settings are a thing you open, change and dismiss, not a place you
+         navigate to and then have to navigate back out of. It keeps whatever you were
+         reading behind it, which is why the scrim is a tint rather than a curtain.
 
-      <!-- ---------------- Settings ---------------- -->
-      <section id="view-settings" class="view hidden">
-        <div class="scroll">
-          <div class="field">
-            <label for="apiKey">Aisha API kaliti</label>
-            <div class="with-button">
-              <input
-                id="apiKey"
-                type="password"
-                placeholder="API kalitini kiriting"
-                autocomplete="off"
-              />
-              <button id="keyTest" class="ghost">Tekshirish</button>
+         Every control here saves the moment it is touched, so there is no Save button to
+         forget — the only thing at the bottom is which version you are running. -->
+    <div id="settingsModal" class="hidden" role="dialog" aria-modal="true" aria-label="Sozlamalar">
+      <div class="modal-scrim" id="settingsScrim"></div>
+      <div class="modal-panel">
+        <aside class="modal-nav">
+          <div class="modal-nav-group">Sozlamalar</div>
+          <button class="modal-nav-item" data-pane="general">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+              <circle cx="16" cy="7" r="2.2" />
+              <circle cx="10" cy="17" r="2.2" /></svg
+            >Umumiy
+          </button>
+          <button class="modal-nav-item" data-pane="system">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="5" width="18" height="12" rx="2.2" />
+              <path d="M9 21h6M12 17v4" /></svg
+            >Tizim
+          </button>
+          <div class="modal-nav-group">Ma’lumotlar</div>
+          <button class="modal-nav-item" data-pane="data">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5V12l3 1.8" /></svg
+            >Tarix
+          </button>
+          <button class="modal-nav-item" data-pane="privacy">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 3.5 19 6v5.5c0 4-2.9 7.4-7 8.9-4.1-1.5-7-4.9-7-8.9V6z" />
+              <path d="M9.4 12.2 11.3 14l3.4-3.6" /></svg
+            >Maxfiylik
+          </button>
+          <!-- Version and updates, bottom-left of the modal — the same place the reference
+               keeps them, and the right one: it is the thing you look for when something is
+               wrong, not something you set. -->
+          <div class="modal-foot">
+            <div class="modal-foot-row">
+              <span id="modalVersion">gapir me</span>
+              <button class="icon-btn" id="updateCheck" title="Yangilanishni tekshirish">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M6.5 18.5A4.5 4.5 0 0 1 7 9.6a5.5 5.5 0 0 1 10.6 1.5A3.7 3.7 0 0 1 17.5 18.5z"
+                  />
+                  <path d="M12 15.5v-6M9.6 11.6 12 9.2l2.4 2.4" />
+                </svg>
+              </button>
             </div>
-            <p id="keyMsg" class="msg"></p>
-            <p class="hint">
-              aisha.group saytidan olinadi. Kalit shu kompyuterda shifrlangan holda saqlanadi.
-            </p>
+            <p class="msg" id="updateMsg"></p>
+            <button class="btn small wide hidden" id="updateInstall">O‘rnatish</button>
           </div>
+        </aside>
 
-          <div class="field">
-            <label for="language">Til</label>
-            <select id="language">
-              <option value="uz">O‘zbekcha</option>
-              <option value="ru">Ruscha</option>
-              <option value="en">Inglizcha</option>
-            </select>
-          </div>
+        <div class="modal-main">
+          <button class="icon-btn modal-close" id="settingsClose" title="Yopish">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+            >
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
 
-          <div class="field">
-            <label for="device">Mikrofon</label>
-            <div class="with-button">
-              <select id="device">
-                <option value="">Tizim standarti</option>
-              </select>
-              <button id="micTest" class="ghost">Tekshirish</button>
+          <!-- ---------------------------- umumiy ---------------------------- -->
+          <section class="modal-pane" data-pane="general">
+            <h2>Umumiy</h2>
+            <div class="rows">
+              <div class="row">
+                <div class="row-text">
+                  <b>Diktovka tugmalari</b>
+                  <span><kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> ni bosib turing va gapiring</span>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <b>Mikrofon</b>
+                  <span>Gapirganda chiziqlar qimirlashi kerak.</span>
+                  <div class="meter" id="meter"></div>
+                  <p class="msg" id="micMsg"></p>
+                </div>
+                <div class="row-control">
+                  <select id="device" aria-label="Mikrofon">
+                    <option value="">Tizim standarti</option>
+                  </select>
+                  <button class="btn ghost small" id="micTest">Tekshirish</button>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <b>Diktovka tili</b>
+                  <span>Diktovka shu tilda eshitiladi va shu tilda yoziladi.</span>
+                </div>
+                <div class="row-control">
+                  <select id="language" aria-label="Diktovka tili">
+                    <option value="uz">O‘zbekcha</option>
+                    <option value="ru">Ruscha</option>
+                    <option value="en">Inglizcha</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <b>Ismingiz</b>
+                  <span>Faqat salomlashuvda ko‘rinadi.</span>
+                </div>
+                <div class="row-control">
+                  <input id="userName" type="text" placeholder="Ismingiz" autocomplete="off" />
+                </div>
+              </div>
             </div>
-            <div id="meter" class="meter" style="margin-top: 10px"></div>
-            <p id="micMsg" class="msg"></p>
-          </div>
+          </section>
 
-          <div class="field row">
-            <input id="launchAtLogin" type="checkbox" />
-            <label for="launchAtLogin">Kompyuter yoqilganda avtomatik ishga tushsin</label>
-          </div>
+          <!-- ----------------------------- tizim ---------------------------- -->
+          <section class="modal-pane" data-pane="system">
+            <h2>Tizim</h2>
+            <div class="rows">
+              <div class="row">
+                <div class="row-text">
+                  <b>Kompyuter yoqilganda ishga tushsin</b>
+                  <span>Trayda jim turadi, oyna ochilmaydi.</span>
+                </div>
+                <div class="row-control">
+                  <label class="switch">
+                    <input type="checkbox" id="launchAtLogin" />
+                    <span class="track"></span>
+                  </label>
+                </div>
+              </div>
 
-          <div class="field row">
-            <input id="showIdlePill" type="checkbox" />
-            <label for="showIdlePill">Ekran pastida kichik belgi doim turaveradi</label>
-          </div>
-
-          <div class="field row">
-            <input id="saveHistory" type="checkbox" />
-            <label for="saveHistory">Aytilgan matnlar tarixga saqlansin</label>
-          </div>
-
-          <hr />
-
-          <div class="field">
-            <label>Yangilanish</label>
-            <div class="with-button">
-              <button id="updateCheck" class="ghost">Tekshirish</button>
-              <button id="updateInstall" class="hidden">O‘rnatish va qayta ishga tushirish</button>
+              <div class="row">
+                <div class="row-text">
+                  <b>Ekran pastidagi belgi doim ko‘rinsin</b>
+                  <span>O‘chirilsa — faqat gapirayotganda chiqadi.</span>
+                </div>
+                <div class="row-control">
+                  <label class="switch">
+                    <input type="checkbox" id="showIdlePill" />
+                    <span class="track"></span>
+                  </label>
+                </div>
+              </div>
             </div>
-            <p id="updateMsg" class="msg"></p>
-          </div>
+          </section>
+
+          <!-- ----------------------------- tarix ---------------------------- -->
+          <section class="modal-pane" data-pane="data">
+            <h2>Tarix</h2>
+            <div class="rows">
+              <div class="row">
+                <div class="row-text">
+                  <b>Tarix saqlansin</b>
+                  <span>Aytilgan matnlar shu kompyuterda saqlanadi.</span>
+                </div>
+                <div class="row-control">
+                  <label class="switch">
+                    <input type="checkbox" id="saveHistory" />
+                    <span class="track"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <b>Tarix fayli</b>
+                  <span class="path" id="historyPath"></span>
+                </div>
+                <div class="row-control">
+                  <button class="btn ghost small" id="copyPath">Manzilni nusxalash</button>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="row-text">
+                  <b>Butun tarixni o‘chirish</b>
+                  <span>Hamma yozuvlar butunlay o‘chadi. Qaytarib bo‘lmaydi.</span>
+                </div>
+                <div class="row-control">
+                  <button class="btn danger small" id="clearAll">O‘chirish</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- --------------------------- maxfiylik -------------------------- -->
+          <section class="modal-pane" data-pane="privacy">
+            <h2>Maxfiylik</h2>
+            <div class="rows">
+              <div class="row">
+                <div class="row-text">
+                  <b>Ovoz</b>
+                  <span>
+                    Ovoz avval gapir me serveriga, undan Google Gemini’ga — matnga o‘girish uchun —
+                    yuboriladi. Ovoz na serverda, na ilovada saqlanadi.
+                  </span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-text">
+                  <b>Matnlar</b>
+                  <span>
+                    Aytganlaringiz shu kompyuterda, tarix faylida qoladi — server matnni saqlamaydi.
+                    Istagan payt bittalab yoki butunlay o‘chirasiz.
+                  </span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="row-text">
+                  <b>Server nimani biladi</b>
+                  <span>
+                    Kirganingizda Google e-pochtangiz va ismingiz saqlanadi. Har bir diktovkadan
+                    serverda faqat vaqti, yozuv uzunligi va belgilar soni qoladi — kunlik limit
+                    shundan hisoblanadi. Boshqa hech qanday kuzatuv yo‘q.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
-        <footer class="bar">
-          <button id="save">Saqlash</button>
-          <span id="saveMsg" class="msg"></span>
-        </footer>
-      </section>
-    </main>
+      </div>
+    </div>
+
+    <div id="toast"></div>
 
     <script type="module" src="./app.ts"></script>
   </body>

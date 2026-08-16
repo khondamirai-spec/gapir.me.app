@@ -1,5 +1,5 @@
 appId: uz.whisperuz.app
-productName: Whisper UZ
+productName: gapir me
 copyright: MIT
 
 directories:
@@ -34,6 +34,24 @@ extraResources:
     to: ffmpeg.exe
   - from: resources/ffmpeg-LICENSE.txt
     to: ffmpeg-LICENSE.txt
+  # The pre-Supabase key pool, kept only for builds made before a backend was configured —
+  # Phase 5 of docs/supabase-setup.md deletes it. Shipped as a plain file rather than baked
+  # into the bundle so a spent key can be replaced on a machine without a new build — and so
+  # it is obvious that these keys are extractable, and must therefore be free-tier keys with
+  # billing disabled. See src/main/keys.ts.
+  - from: resources/gemini-keys.json
+    to: gemini-keys.json
+
+# The custom scheme the Google sign-in comes back on.
+#
+# Without this the installer registers no handler, the browser has nowhere to send the
+# consent, and every sign-in on a packaged build silently does nothing — while working
+# perfectly in dev, where src/main/index.ts registers the scheme at runtime against
+# electron.exe. That gap is why this belongs in the build config and not only in code.
+protocols:
+  - name: gapir me
+    schemes:
+      - gapirme
 
 # Owner and repo are inferred from the git remote, so this stays correct if the repo moves.
 publish:
@@ -58,8 +76,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Whisper UZ
+  shortcutName: gapir me
   # A fixed name, deliberately without the version: it makes
-  # /releases/latest/download/Whisper-UZ-Setup.exe a permanent link the download page can
+  # /releases/latest/download/gapir-me-Setup.exe a permanent link the download page can
   # hardcode. electron-updater reads the real filename out of latest.yml, so it doesn't care.
-  artifactName: Whisper-UZ-Setup.${ext}
+  artifactName: gapir-me-Setup.${ext}

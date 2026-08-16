@@ -1,0 +1,51 @@
+# Supabase CLI project config. `project_id` is only a local label; the deployed project is
+# chosen by `supabase link --project-ref <ref>`.
+project_id = "gapir-me"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+# Must match the deployed project, or the PKCE redirect is rejected as an unknown site_url.
+site_url = "gapirme://auth-callback"
+# The desktop app comes back through a custom scheme rather than a web page. Supabase treats
+# this exactly like a mobile deep link — Google never sees the scheme, it redirects to
+# Supabase's own https callback and Supabase forwards to this.
+additional_redirect_urls = ["gapirme://auth-callback", "http://localhost:54321"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret = "env(GOOGLE_CLIENT_SECRET)"
+
+[functions.transcribe]
+# Left on: Supabase verifies the caller's JWT before the function runs, so an unauthenticated
+# request never reaches code that could spend the Gemini key.
+verify_jwt = true
+
+[functions.checkout]
+# Creates an order for whoever is signed in, so it must know who that is.
+verify_jwt = true
+
+[functions.payme]
+# Off, and it must be. Payme calls this endpoint from its own servers with HTTP Basic auth
+# (`Paycom:<merchant_key>`) and knows nothing about Supabase JWTs — with verification on,
+# every callback would be rejected and no payment would ever complete. The function
+# authenticates the caller itself; see its own header comment.
+verify_jwt = false

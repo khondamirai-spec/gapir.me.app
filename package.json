@@ -1,13 +1,15 @@
 {
   "name": "whisper-uz",
   "version": "0.2.0",
-  "description": "Uzbek push-to-talk dictation — hold a hotkey, speak, get text in any app",
+  "description": "Uzbek push-to-talk dictation — hold a hotkey, speak, get text in any app. Powered by Google Gemini.",
   "main": "./out/main/index.js",
-  "author": "",
+  "author": "gapir.me <khondamirai@gmail.com>",
   "license": "MIT",
   "private": true,
-  "//repository": "TODO: replace SET-YOUR-GITHUB-USERNAME below with your GitHub account. It is where electron-updater looks for new versions and where the download page points; until it is real, auto-update finds nothing. See the Releasing section of the README.",
-  "repository": "github:SET-YOUR-GITHUB-USERNAME/whisper-uz",
+  "repository": "github:khondamirai-spec/gapir.me.app",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:mock": "node scripts/dev.mjs --mock",
@@ -18,12 +20,13 @@
     "dist": "npm run build && electron-builder --win --publish never",
     "prerelease": "npm run ffmpeg",
     "release": "npm run build && electron-builder --win --publish always",
-    "spike": "node --env-file=.env scripts/spike-aisha-realtime.mjs",
+    "spike": "node scripts/spike-gemini.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "@supabase/supabase-js": "^2.112.3",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
     "uiohook-napi": "^1.5.4",

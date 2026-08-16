@@ -1,14 +1,30 @@
-import type { HistoryEntry, Language, Settings, UpdateStatus } from '../../shared/types';
+// The brand faces. Imported from the entry rather than <link>ed from the HTML so that Vite
+// emits the .woff2 files and rewrites their URLs for both the dev server and file://.
+import '../fonts/fonts.css';
+import type {
+  AccountState,
+  AppSection,
+  HistoryEntry,
+  Language,
+  Settings,
+  StyleSettings,
+  UpdateStatus
+} from '../../shared/types';
+import { countWords, wordsPerMinute, WORD_CHARS } from '../../shared/text';
 
 /**
- * The app window: your dictation history, and the settings behind it.
+ * The app window: history, statistics, style, notes and settings.
  *
- * Plain DOM on purpose — this is three screens with no shared state to speak of, and a
- * framework would be more machinery than the whole window is worth. Main remains the source
- * of truth for everything; this file reads, renders, and asks main to change things.
+ * Plain DOM on purpose — main owns every piece of state that matters, and this file reads
+ * it, draws it, and asks main to change it. A framework here would add a build step and a
+ * mental model without removing a single line of the work below.
+ *
+ * Two rules worth keeping while editing:
+ *  - anything the user typed goes in with `textContent`, never `innerHTML`. Transcripts are
+ *    arbitrary text and this window renders hundreds of them.
+ *  - `settings` below is a cache of what main last told us. Change it through `patch()`,
+ *    never by assignment, so the two can't drift.
  */
-
-type Tab = 'welcome' | 'history' | 'settings';
 
 function el<T extends Element>(id: string): T {
   const found = document.getElementById(id);
@@ -16,12 +32,82 @@ function el<T extends Element>(id: string): T {
   return found as unknown as T;
 }
 
-const tabsEl = el<HTMLElement>('tabs');
-const versionEl = el<HTMLElement>('version');
+/** Our cache of main's settings. Never written directly — see `patch()`. */
+let settings: Settings;
+let entries: HistoryEntry[] = [];
 
-// ---------------------------------------------------------------- level meter
+async function patch(change: Partial<Settings>): Promise<boolean> {
+  const result = await window.api.setSettings(change);
+  if (!result.ok) {
+    toast(result.error ?? 'Saqlab bo‘lmadi');
+    return false;
+  }
+  settings = { ...settings, ...change };
+  return true;
+}
 
-const METER_BARS = 14;
+// ------------------------------------------------------------------- toast
+
+const toastEl = el<HTMLElement>('toast');
+let toastTimer: number | undefined;
+
+function toast(message: string): void {
+  toastEl.textContent = message;
+  toastEl.classList.add('on');
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toastEl.classList.remove('on'), 1800);
+}
+
+function setMsg(target: HTMLElement, text: string, kind: '' | 'ok' | 'warn' | 'err' = ''): void {
+  target.textContent = text;
+  target.className = kind ? `msg ${kind}` : 'msg';
+}
+
+// ------------------------------------------------------------------- icons
+
+/**
+ * Inline SVG, because the window's CSP is `default-src 'self'` and an icon font would be a
+ * network request that never resolves. Written as markup rather than as DOM calls purely
+ * for legibility; every string here is a constant in this file, never user input.
+ */
+const ICONS: Record<string, string> = {
+  mic: '<path d="M12 3.5a2.6 2.6 0 0 1 2.6 2.6v5a2.6 2.6 0 1 1-5.2 0v-5A2.6 2.6 0 0 1 12 3.5z"/><path d="M5.8 11a6.2 6.2 0 0 0 12.4 0"/><path d="M12 17.2V21"/>',
+  chart: '<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/>',
+  style: '<path d="M4 6h10"/><path d="M9 6v13"/><path d="M14.5 12h5.5"/><path d="M17.2 12v7"/>',
+  note: '<path d="M5 3.5h9.5L19 8v12.5H5z"/><path d="M14 3.5V8h5"/><path d="M8.5 13h7"/><path d="M8.5 16.5h4.5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.5"/><path d="M12 17.2h.01"/>',
+  user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-6A3.5 3.5 0 0 0 3 6.5v6A2.5 2.5 0 0 0 5.5 15"/>',
+  trash:
+    '<path d="M4.5 6.5h15"/><path d="M9.5 6.5V4.8A1.3 1.3 0 0 1 10.8 3.5h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7"/><path d="M6.5 6.5 7.4 20a1.3 1.3 0 0 0 1.3 1.2h6.6a1.3 1.3 0 0 0 1.3-1.2l.9-13.5"/>',
+  // The four times of day, for the Statistika rhythm rows.
+  sunrise:
+    '<path d="M12 2.8v4.4"/><path d="M9.3 5.5 12 2.8l2.7 2.7"/><path d="M5.3 9.6 4 8.3M18.7 9.6 20 8.3"/><path d="M7 16a5 5 0 0 1 10 0"/><path d="M2.5 20h19"/><path d="M2.5 16H4.2M19.8 16h1.7"/>',
+  sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.3M12 19.2v2.3M4.4 4.4 6 6M18 18l1.6 1.6M2.5 12h2.3M19.2 12h2.3M4.4 19.6 6 18M18 6l1.6-1.6"/>',
+  sunset:
+    '<path d="M12 7.2V2.8"/><path d="M9.3 4.5 12 7.2l2.7-2.7"/><path d="M5.3 9.6 4 8.3M18.7 9.6 20 8.3"/><path d="M7 16a5 5 0 0 1 10 0"/><path d="M2.5 20h19"/><path d="M2.5 16H4.2M19.8 16h1.7"/>',
+  moon: '<path d="M20 14.4A8.6 8.6 0 0 1 9.6 4 8.6 8.6 0 1 0 20 14.4z"/>'
+};
+
+function icon(name: string, size = 16): string {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] ?? ''}</svg>`;
+}
+
+/** A small round icon button, used in list rows. */
+function iconButton(name: string, title: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.className = 'icon-btn';
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.innerHTML = icon(name, 15);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+// ------------------------------------------------------------- level meter
+
+const METER_BARS = 16;
 
 interface Meter {
   set(level: number): void;
@@ -46,7 +132,7 @@ function createMeter(container: HTMLElement): Meter {
       bars.forEach((bar, i) => {
         const on = i < lit;
         bar.classList.toggle('lit', on);
-        bar.style.height = `${on ? 4 + (i / METER_BARS) * 18 : 3}px`;
+        bar.style.height = `${on ? 5 + (i / METER_BARS) * 20 : 3}px`;
       });
     },
     reset(): void {
@@ -76,8 +162,7 @@ const micTest = {
     await this.stop();
     if (wasMine) return;
 
-    msg.textContent = '';
-    msg.className = 'msg';
+    setMsg(msg, '');
     this.active = { button, meter };
     button.textContent = 'To‘xtatish';
     await window.api.startMicTest(deviceId);
@@ -93,8 +178,6 @@ const micTest = {
 };
 
 window.api.onMicLevel((level) => micTest.active?.meter.set(level));
-
-// ---------------------------------------------------------------- shared bits
 
 async function fillDevices(select: HTMLSelectElement, selectedId: string): Promise<number> {
   const devices = await window.api.listDevices();
@@ -112,54 +195,161 @@ async function fillDevices(select: HTMLSelectElement, selectedId: string): Promi
   return devices.length;
 }
 
-function setMsg(target: HTMLElement, text: string, kind: '' | 'ok' | 'warn' | 'err' = ''): void {
-  target.textContent = text;
-  target.className = kind ? `msg ${kind}` : 'msg';
+// ------------------------------------------------------------- window chrome
+
+el<HTMLButtonElement>('winMin').addEventListener('click', () => void window.api.minimizeWindow());
+el<HTMLButtonElement>('winClose').addEventListener('click', () => void window.api.closeWindow());
+
+const winMaxEl = el<HTMLButtonElement>('winMax');
+winMaxEl.addEventListener('click', async () =>
+  setMaximized(await window.api.toggleMaximizeWindow())
+);
+
+/** The restore glyph is two offset rectangles; the maximise one is a single square. */
+function setMaximized(maximized: boolean): void {
+  winMaxEl.innerHTML = maximized
+    ? '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="1.5" y="3.5" width="7" height="7" rx="1"/><path d="M3.8 3.5v-2h6.7v6.7h-2"/></svg>'
+    : '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="1.5" y="1.5" width="9" height="9" rx="1"/></svg>';
+  winMaxEl.title = maximized ? 'Oldingi holatga' : 'Kattalashtirish';
 }
 
-async function runKeyTest(
-  input: HTMLInputElement,
-  button: HTMLButtonElement,
-  msg: HTMLElement,
-  language: Language
-): Promise<boolean> {
-  button.disabled = true;
-  setMsg(msg, 'Tekshirilmoqda…');
-  const result = await window.api.testKey(input.value, language);
-  button.disabled = false;
+window.api.onWindowState(setMaximized);
 
-  setMsg(
-    msg,
-    result.message,
-    result.status === 'ok' ? 'ok' : result.status === 'invalid' ? 'err' : 'warn'
-  );
-  return result.status === 'ok';
+el<HTMLButtonElement>('toggleSidebar').addEventListener('click', () => {
+  document.body.classList.toggle('sidebar-collapsed');
+});
+
+el<HTMLButtonElement>('openSettingsTop').addEventListener('click', () => void show('settings'));
+
+// -------------------------------------------------------------- navigation
+
+interface NavEntry {
+  section: AppSection;
+  label: string;
+  icon: string;
 }
 
-// ---------------------------------------------------------------- history view
+const NAV: NavEntry[] = [
+  { section: 'dictation', label: 'Diktovka', icon: 'mic' },
+  { section: 'insights', label: 'Statistika', icon: 'chart' },
+  { section: 'style', label: 'Uslub', icon: 'style' },
+  { section: 'scratchpad', label: 'Qaydlar', icon: 'note' }
+];
+
+const NAV_BOTTOM: NavEntry[] = [
+  { section: 'account', label: 'Hisob', icon: 'user' },
+  { section: 'settings', label: 'Sozlamalar', icon: 'gear' },
+  { section: 'help', label: 'Yordam', icon: 'help' }
+];
+
+const navEl = el<HTMLElement>('nav');
+const navBottomEl = el<HTMLElement>('navBottom');
+
+function renderNav(container: HTMLElement, items: NavEntry[]): void {
+  container.replaceChildren();
+  for (const item of items) {
+    const button = document.createElement('button');
+    button.className = 'nav-item';
+    button.dataset.section = item.section;
+    button.innerHTML = `${icon(item.icon)}<span>${item.label}</span>`;
+    button.addEventListener('click', () => void show(item.section));
+    container.appendChild(button);
+  }
+}
+
+renderNav(navEl, NAV);
+renderNav(navBottomEl, NAV_BOTTOM);
+
+const views = new Map<AppSection, HTMLElement>();
+for (const view of document.querySelectorAll<HTMLElement>('.view')) {
+  views.set(view.dataset.view as AppSection, view);
+}
+
+/**
+ * Show a section.
+ *
+ * `settings` is the odd one out and deliberately so: it is a modal over whatever you were
+ * reading, not a pane you navigate to, so it opens on top and the pane underneath is left
+ * exactly where it was. Everything else routes normally.
+ */
+async function show(section: AppSection): Promise<void> {
+  if (section === 'settings') {
+    await openSettings();
+    return;
+  }
+
+  // The microphone must not stay open on a screen the user has navigated away from.
+  await micTest.stop();
+
+  for (const [name, view] of views) view.classList.toggle('on', name === section);
+  for (const button of document.querySelectorAll<HTMLElement>('.nav-item')) {
+    button.classList.toggle('on', button.dataset.section === section);
+  }
+
+  // Panes that read something main owns re-read it on entry; nothing here caches across
+  // navigations except the settings object itself.
+  if (section === 'dictation' || section === 'insights') await loadHistory();
+  if (section === 'style') renderStyle();
+  if (section === 'scratchpad')
+    el<HTMLTextAreaElement>('scratchpadText').value = settings.scratchpad;
+  if (section === 'account') {
+    // Draw what we already know first, then correct it: today's count changes with every
+    // dictation, including ones made while this window was closed, so the cached number is
+    // right often enough to show immediately and wrong often enough to always re-ask.
+    renderAccount();
+    await window.api.refreshPlan();
+  }
+}
+
+function isSection(name: string): name is AppSection {
+  return views.has(name as AppSection) || name === 'settings';
+}
+
+window.api.onRoute((section) => {
+  if (isSection(section)) void show(section);
+});
+
+function requestedSection(): AppSection {
+  const hash = window.location.hash.replace('#', '');
+  return isSection(hash) ? hash : 'dictation';
+}
+
+// ---------------------------------------------------------------- history
 
 const searchEl = el<HTMLInputElement>('search');
+const searchWrapEl = el<HTMLElement>('searchWrap');
 const entriesEl = el<HTMLElement>('entries');
-const historyPathEl = el<HTMLElement>('historyPath');
-const clearAllEl = el<HTMLButtonElement>('clearAll');
+const greetingEl = el<HTMLElement>('greeting');
 
-let entries: HistoryEntry[] = [];
 /** Ids the user has clicked open; kept across re-renders so a new dictation doesn't collapse them. */
 const expanded = new Set<string>();
 
-function relativeTime(ts: number): string {
-  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 45) return 'hozir';
-  if (seconds < 3600) return `${Math.round(seconds / 60)} daqiqa oldin`;
-  if (seconds < 86_400) return `${Math.round(seconds / 3600)} soat oldin`;
+const DAY_MS = 86_400_000;
 
+function startOfDay(ts: number): number {
   const date = new Date(ts);
-  const time = date.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' });
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return `kecha ${time}`;
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
 
-  return `${date.toLocaleDateString('uz-UZ')} ${time}`;
+/** BUGUN / KECHA / a date — the same three-way split the eye makes when scanning a log. */
+function dayLabel(ts: number): string {
+  const today = startOfDay(Date.now());
+  const day = startOfDay(ts);
+  if (day === today) return 'Bugun';
+  if (day === today - DAY_MS) return 'Kecha';
+  return new Date(ts).toLocaleDateString('uz-UZ', {
+    day: 'numeric',
+    month: 'long',
+    year: day < today - 300 * DAY_MS ? 'numeric' : undefined
+  });
+}
+
+function timeLabel(ts: number): string {
+  return new Date(ts).toLocaleTimeString('uz-UZ', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function renderHistory(): void {
@@ -173,145 +363,1020 @@ function renderHistory(): void {
   if (visible.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.innerHTML = query
-      ? 'Bunday matn topilmadi.'
-      : 'Hali hech narsa aytilmagan.<br />Xohlagan dasturda <span class="kbd">Ctrl</span> + <span class="kbd">Caps Lock</span> bosib gapiring.';
+    if (query) {
+      empty.textContent = 'Bunday matn topilmadi.';
+    } else {
+      empty.innerHTML =
+        '<span class="big">Hali hech narsa aytilmagan</span>' +
+        'Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> ni bosib turib gapiring.<br />' +
+        'Aytganingiz shu yerda paydo bo‘ladi.';
+    }
     entriesEl.appendChild(empty);
     return;
   }
 
-  for (const entry of visible) {
-    entriesEl.appendChild(renderEntry(entry));
-  }
+  let lastDay = '';
+  visible.forEach((entry, index) => {
+    const label = dayLabel(entry.createdAt);
+    if (label !== lastDay) {
+      lastDay = label;
+      const head = document.createElement('div');
+      head.className = 'group-head';
+      head.textContent = label;
+      entriesEl.appendChild(head);
+    }
+    entriesEl.appendChild(renderEntry(entry, index));
+  });
 }
 
-function renderEntry(entry: HistoryEntry): HTMLElement {
-  const card = document.createElement('div');
-  card.className = 'entry';
+function renderEntry(entry: HistoryEntry, index: number): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'entry';
+  // Stagger the rows in, but only the first screenful: past that the delay would be a
+  // list that visibly takes a second to appear.
+  row.style.animationDelay = `${Math.min(index, 10) * 22}ms`;
 
-  const head = document.createElement('div');
-  head.className = 'entry-head';
+  const when = document.createElement('div');
+  when.className = 'when';
+  when.textContent = timeLabel(entry.createdAt);
+  when.title = `${(entry.durationMs / 1000).toFixed(1)} s · ${countWords(entry.text)} so‘z`;
 
-  const when = document.createElement('span');
-  when.className = 'entry-when';
-  when.textContent = `${relativeTime(entry.createdAt)} · ${(entry.durationMs / 1000).toFixed(1)} s`;
-
-  const chip = document.createElement('span');
-  chip.className = 'chip';
-  chip.textContent = entry.language;
-
-  const actions = document.createElement('div');
-  actions.className = 'entry-actions';
-
-  const copy = document.createElement('button');
-  copy.className = 'small ghost';
-  copy.textContent = 'Nusxa olish';
-  copy.addEventListener('click', () => {
-    void window.api.copyText(entry.text);
-    copy.textContent = 'Nusxalandi ✓';
-    setTimeout(() => {
-      copy.textContent = 'Nusxa olish';
-    }, 1200);
-  });
-
-  const remove = document.createElement('button');
-  remove.className = 'danger';
-  remove.textContent = 'O‘chirish';
-  remove.addEventListener('click', () => void window.api.deleteHistory(entry.id));
-
-  actions.append(copy, remove);
-  head.append(when, chip, actions);
+  const body = document.createElement('div');
+  body.style.flex = '1';
+  body.style.minWidth = '0';
 
   const text = document.createElement('div');
-  text.className = expanded.has(entry.id) ? 'entry-text' : 'entry-text clamped';
+  text.className = expanded.has(entry.id) ? 'text' : 'text clamped';
   text.textContent = entry.text;
-  text.title = 'Ochish uchun bosing';
-  text.addEventListener('click', () => {
-    if (expanded.has(entry.id)) expanded.delete(entry.id);
-    else expanded.add(entry.id);
-    text.classList.toggle('clamped');
+  body.appendChild(text);
+
+  // Only offer the toggle when there is something hidden: `scrollHeight` is only truthful
+  // after layout, so this runs on the next frame rather than during construction.
+  requestAnimationFrame(() => {
+    if (text.scrollHeight <= text.clientHeight + 2 && !expanded.has(entry.id)) return;
+    const more = document.createElement('button');
+    more.className = 'more';
+    const sync = (): void => {
+      more.textContent = expanded.has(entry.id) ? 'Yig‘ish' : 'To‘liq ko‘rsatish';
+    };
+    sync();
+    more.addEventListener('click', () => {
+      if (expanded.has(entry.id)) expanded.delete(entry.id);
+      else expanded.add(entry.id);
+      text.classList.toggle('clamped');
+      sync();
+    });
+    body.appendChild(more);
   });
 
-  card.append(head, text);
-  return card;
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.append(
+    iconButton('copy', 'Nusxa olish', () => {
+      void window.api.copyText(entry.text);
+      toast('Nusxalandi');
+    }),
+    iconButton('trash', 'O‘chirish', () => void window.api.deleteHistory(entry.id))
+  );
+
+  row.append(when, body, actions);
+  return row;
 }
 
 async function loadHistory(): Promise<void> {
   const { entries: list, filePath } = await window.api.listHistory();
   entries = list;
-  historyPathEl.textContent = filePath;
-  historyPathEl.title = filePath;
+  el<HTMLElement>('historyPath').textContent = filePath;
+  el<HTMLElement>('helpPath').textContent = filePath;
   renderHistory();
+  renderRail();
+  renderInsights();
 }
 
 searchEl.addEventListener('input', renderHistory);
-
-clearAllEl.addEventListener('click', () => {
-  if (entries.length === 0) return;
-  if (!confirm(`${entries.length} ta yozuv butunlay o‘chiriladi. Davom etamizmi?`)) return;
-  void window.api.clearHistory();
+searchEl.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  searchEl.value = '';
+  searchWrapEl.classList.remove('open');
+  renderHistory();
+});
+searchEl.addEventListener('blur', () => {
+  if (!searchEl.value) searchWrapEl.classList.remove('open');
 });
 
-// Main tells us whenever the log changes — including from a dictation happening right now.
+el<HTMLButtonElement>('searchBtn').addEventListener('click', () => {
+  searchWrapEl.classList.toggle('open');
+  if (searchWrapEl.classList.contains('open')) searchEl.focus();
+  else if (searchEl.value) {
+    searchEl.value = '';
+    renderHistory();
+  }
+});
+
+// Main tells us whenever the log changes — including from a dictation happening right now,
+// into this very window's notes pane.
 window.api.onHistoryChanged(() => void loadHistory());
 
-// ---------------------------------------------------------------- settings view
+// ------------------------------------------------------------------ stats
 
-const apiKeyEl = el<HTMLInputElement>('apiKey');
-const keyTestEl = el<HTMLButtonElement>('keyTest');
-const keyMsgEl = el<HTMLElement>('keyMsg');
+interface Stats {
+  dictations: number;
+  words: number;
+  wpm: number;
+  /** Fastest single dictation, ignoring clips too short to mean anything. */
+  bestWpm: number;
+  streak: number;
+  /** The last day of the current streak, or 0 when there is no streak. */
+  streakEnd: number;
+  longestStreak: number;
+  seconds: number;
+  longestMs: number;
+  /** Days that saw at least one dictation. */
+  activeDays: number;
+  /** Words per calendar day, keyed by `startOfDay` — the chart and the heat map both read it. */
+  byDay: Map<number, number>;
+}
+
+/**
+ * A dictation this short is not a speaking rate, it is a rounding error: two words in
+ * 700ms is 170 words a minute, and one of those at the top of a "fastest" figure would
+ * make the honest number underneath it look wrong.
+ */
+const MIN_RATED_MS = 2500;
+
+/**
+ * Everything the Insights pane and the sidebar rail show, from the history log alone.
+ *
+ * The streak counts backwards from today, and tolerates today being empty: at 9am nobody
+ * has dictated yet, and telling them their streak is over would be both wrong and rude.
+ */
+function computeStats(list: HistoryEntry[]): Stats {
+  let words = 0;
+  let ms = 0;
+  let bestWpm = 0;
+  let longestMs = 0;
+  const byDay = new Map<number, number>();
+
+  for (const entry of list) {
+    const count = countWords(entry.text);
+    words += count;
+    ms += entry.durationMs;
+    if (entry.durationMs > longestMs) longestMs = entry.durationMs;
+    if (entry.durationMs >= MIN_RATED_MS) {
+      bestWpm = Math.max(bestWpm, wordsPerMinute(entry.text, entry.durationMs));
+    }
+    const day = startOfDay(entry.createdAt);
+    byDay.set(day, (byDay.get(day) ?? 0) + count);
+  }
+
+  const days = new Set(list.map((entry) => startOfDay(entry.createdAt)));
+  const today = startOfDay(Date.now());
+  let streak = 0;
+  let cursor = days.has(today) ? today : today - DAY_MS;
+  const streakEnd = days.has(cursor) ? cursor : 0;
+  while (days.has(cursor)) {
+    streak++;
+    cursor -= DAY_MS;
+  }
+
+  // The best run ever, over the sorted days: a gap of more than one day ends a run.
+  const sorted = [...days].sort((a, b) => a - b);
+  let longestStreak = 0;
+  let run = 0;
+  sorted.forEach((day, index) => {
+    run = index > 0 && day - sorted[index - 1] === DAY_MS ? run + 1 : 1;
+    longestStreak = Math.max(longestStreak, run);
+  });
+
+  return {
+    dictations: list.length,
+    words,
+    wpm: ms > 0 ? Math.round(words / (ms / 60_000)) : 0,
+    bestWpm,
+    streak,
+    streakEnd,
+    longestStreak,
+    seconds: Math.round(ms / 1000),
+    longestMs,
+    activeDays: days.size,
+    byDay
+  };
+}
+
+function formatCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
+  return String(value);
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} daq`;
+  const hours = Math.floor(seconds / 3600);
+  return `${hours} soat ${Math.round((seconds % 3600) / 60)} daq`;
+}
+
+const railStatsEl = el<HTMLElement>('railStats');
+
+function renderRail(): void {
+  const stats = computeStats(entries);
+  railStatsEl.replaceChildren();
+  const rows: Array<[string, string]> = [
+    [formatCount(stats.words), 'jami so‘z'],
+    [String(stats.wpm), 'so‘z/daqiqa'],
+    [String(stats.streak), 'kun ketma-ket']
+  ];
+  for (const [value, label] of rows) {
+    const row = document.createElement('div');
+    row.className = 'stat';
+    const b = document.createElement('b');
+    b.textContent = value;
+    const span = document.createElement('span');
+    span.textContent = label;
+    row.append(b, span);
+    railStatsEl.appendChild(row);
+  }
+}
+
+// --------------------------------------------------------------- insights
+
+/*
+ * The Statistika pane is a dashboard of six cards over two tabs, and every figure on it
+ * is arithmetic over history.json — there is nothing else to read. That constraint is
+ * what shaped the cards: no "you are in the top 1% of users", because we have never seen
+ * another user; no per-application breakdown, because a dictation is pasted into whatever
+ * had focus and we never learn what that was. What the log does know is when you spoke,
+ * for how long, in which language and how many words came back, so those are the panels.
+ */
+
+const chartEl = el<HTMLElement>('chart');
+
+function renderInsights(): void {
+  const stats = computeStats(entries);
+  renderHeadline(stats);
+  renderRhythm();
+  renderStreak(stats);
+  renderVoice(stats);
+  renderChart();
+}
+
+/** Rate an average typist sustains, and the baseline the "time saved" figure is measured against. */
+const TYPING_WPM = 40;
+
+const LANGUAGE_NAMES: Record<Language, string> = {
+  uz: 'O‘zbekcha',
+  ru: 'Ruscha',
+  en: 'Inglizcha'
+};
+
+function renderHeadline(stats: Stats): void {
+  el<HTMLElement>('statWpm').textContent = String(stats.wpm);
+  renderGauge(stats);
+
+  /*
+   * Typing the same words at TYPING_WPM, minus the time actually spent speaking them.
+   * Labelled as an estimate in the UI because that is what it is — but it is the number
+   * that answers "was this worth installing?", which no exact figure here does.
+   */
+  const typingSeconds = (stats.words / TYPING_WPM) * 60;
+  const saved = Math.max(0, Math.round(typingSeconds - stats.seconds));
+  const savedEl = el<HTMLElement>('statSaved');
+  savedEl.textContent = formatDuration(saved);
+  // "2 soat 16 daq" is a figure with eleven characters in it — see `.figure.long`.
+  savedEl.classList.toggle('long', savedEl.textContent.length > 7);
+  el<HTMLElement>('statDictations').textContent = formatCount(stats.dictations);
+  el<HTMLElement>('statAvgWords').textContent = String(
+    stats.dictations > 0 ? Math.round(stats.words / stats.dictations) : 0
+  );
+
+  el<HTMLElement>('statWords').textContent = formatCount(stats.words);
+  renderDelta();
+  renderLanguages();
+}
+
+/** Words in the `days` days ending now. */
+function wordsSince(days: number, endingDaysAgo = 0): number {
+  const now = Date.now();
+  const end = now - endingDaysAgo * DAY_MS;
+  const start = end - days * DAY_MS;
+  return entries
+    .filter((entry) => entry.createdAt > start && entry.createdAt <= end)
+    .reduce((sum, entry) => sum + countWords(entry.text), 0);
+}
+
+/**
+ * The last 30 days against the 30 before them.
+ *
+ * Hidden rather than shown as +100% when there is no earlier month to compare with: a
+ * first week of use is not a rise, and the pill is only worth the space when it means
+ * something.
+ */
+function renderDelta(): void {
+  const pill = el<HTMLElement>('statDelta');
+  const recent = wordsSince(30);
+  const previous = wordsSince(30, 30);
+  if (previous === 0 || recent === 0) {
+    pill.hidden = true;
+    return;
+  }
+  const change = Math.round(((recent - previous) / previous) * 100);
+  pill.hidden = false;
+  pill.textContent = `${change >= 0 ? '↗' : '↘'} ${change >= 0 ? '+' : ''}${change}% bu oy`;
+}
+
+function renderLanguages(): void {
+  const host = el<HTMLElement>('statLangs');
+  host.replaceChildren();
+
+  const totals = new Map<Language, number>();
+  for (const entry of entries) {
+    totals.set(entry.language, (totals.get(entry.language) ?? 0) + countWords(entry.text));
+  }
+
+  const rows = [...totals.entries()].filter(([, words]) => words > 0).sort((a, b) => b[1] - a[1]);
+  if (rows.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'metric-row';
+    const span = document.createElement('span');
+    span.textContent = 'Hali diktovka yo‘q.';
+    empty.appendChild(span);
+    host.appendChild(empty);
+    return;
+  }
+
+  for (const [language, words] of rows) {
+    const row = document.createElement('div');
+    row.className = 'metric-row';
+    const b = document.createElement('b');
+    b.textContent = LANGUAGE_NAMES[language];
+    const span = document.createElement('span');
+    span.className = 'trail';
+    span.textContent = `${formatCount(words)} so‘z`;
+    row.append(b, span);
+    host.appendChild(row);
+  }
+}
+
+// ------------------------------------------------------------------ gauge
+
+/** Where the arc ends. Above this the needle simply pins — nobody dictates at 220. */
+const GAUGE_MAX_WPM = 200;
+
+/**
+ * A half-circle from 0 to GAUGE_MAX_WPM, drawn as one stroked arc with a dash offset.
+ *
+ * SVG for the same reason the chart is SVG: this is geometry, and a rotated box with a
+ * clipped overflow would be three elements pretending to be one shape.
+ */
+function renderGauge(stats: Stats): void {
+  const host = el<HTMLElement>('wpmGauge');
+  host.replaceChildren();
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 160 92');
+  svg.setAttribute('aria-hidden', 'true');
+
+  // Both halves are the same path; only the dash pattern differs.
+  const d = 'M 14 84 A 66 66 0 0 1 146 84';
+  const length = Math.PI * 66;
+  const share = Math.min(1, stats.wpm / GAUGE_MAX_WPM);
+
+  for (const kind of ['track', 'fill'] as const) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke-width', '12');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('class', kind);
+    if (kind === 'fill') {
+      path.setAttribute('stroke-dasharray', `${length * share} ${length}`);
+      // The keyframe animates from a full offset, so the arc sweeps in from zero.
+      path.style.setProperty('--dash-len', String(length * share));
+    }
+    svg.appendChild(path);
+  }
+
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  const label = document.createElement('span');
+  const value = document.createElement('b');
+  if (stats.bestWpm > 0) {
+    label.textContent = 'Eng tez';
+    value.textContent = String(stats.bestWpm);
+  } else {
+    label.textContent = 'Hali';
+    value.textContent = '—';
+  }
+  cap.append(label, value);
+
+  host.append(svg, cap);
+}
+
+// ------------------------------------------------------------- day rhythm
+
+/**
+ * When the day's dictations happen, in four buckets.
+ *
+ * Local hours, because the question is "when do you work?" and the answer is only ever
+ * asked in the clock on the wall next to the person asking it.
+ */
+const RHYTHM: Array<{ label: string; icon: string; from: number; to: number }> = [
+  { label: 'Ertalab', icon: 'sunrise', from: 5, to: 12 },
+  { label: 'Kunduzi', icon: 'sun', from: 12, to: 17 },
+  { label: 'Kechqurun', icon: 'sunset', from: 17, to: 22 },
+  { label: 'Tun', icon: 'moon', from: 22, to: 5 }
+];
+
+function renderRhythm(): void {
+  const host = el<HTMLElement>('rhythmRows');
+  host.replaceChildren();
+
+  const counts = RHYTHM.map(
+    (bucket) =>
+      entries.filter((entry) => {
+        const hour = new Date(entry.createdAt).getHours();
+        // The night bucket wraps midnight, so it is the one that reads as an "or".
+        return bucket.from < bucket.to
+          ? hour >= bucket.from && hour < bucket.to
+          : hour >= bucket.from || hour < bucket.to;
+      }).length
+  );
+
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  const busiest = Math.max(...counts, 1);
+  el<HTMLElement>('rhythmTotal').textContent = String(total);
+
+  RHYTHM.forEach((bucket, index) => {
+    const count = counts[index];
+    const share = total > 0 ? Math.round((count / total) * 100) : 0;
+
+    const row = document.createElement('div');
+    row.className = share > 0 ? 'usage-row' : 'usage-row quiet';
+
+    const ico = document.createElement('div');
+    ico.className = 'ico';
+    ico.innerHTML = icon(bucket.icon, 17);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'barwrap';
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    /*
+     * The track is the busiest part of the day, not 100%: four buckets can't each hold
+     * much of the total, and bars drawn against 100% would all be stubs. The lengths stay
+     * proportional to each other — it is a scaled axis, and the label on each bar still
+     * carries the true share.
+     */
+    bar.style.width = `${Math.round((count / busiest) * 100)}%`;
+    bar.textContent = `${share}%`;
+    wrap.appendChild(bar);
+
+    const what = document.createElement('div');
+    what.className = 'what';
+    what.textContent = `${bucket.label} · ${count} ta`;
+
+    row.append(ico, wrap, what);
+    host.appendChild(row);
+  });
+}
+
+// --------------------------------------------------------------- heat map
+
+const WEEKDAYS = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
+const MONTHS = ['Yan', 'Fev', 'Mar', 'Apr', 'May', 'Iyn', 'Iyl', 'Avg', 'Sen', 'Okt', 'Noy', 'Dek'];
+
+const WEEK_MS = 7 * DAY_MS;
+/** Columns on screen at once — about four months, which is what the card is wide enough for. */
+const HEAT_WEEKS = 18;
+/** How far back the arrows have walked, in weeks. */
+let heatOffset = 0;
+
+function renderStreak(stats: Stats): void {
+  el<HTMLElement>('streakTitle').textContent = `${stats.streak} kun ketma-ket`;
+  el<HTMLElement>('streakBest').textContent = String(stats.longestStreak);
+  renderHeat(stats);
+
+  const oldest =
+    entries.length > 0 ? Math.min(...entries.map((entry) => entry.createdAt)) : Date.now();
+  const weeksOfHistory = Math.ceil((Date.now() - oldest) / WEEK_MS);
+  el<HTMLButtonElement>('heatPrev').disabled = heatOffset >= Math.max(0, weeksOfHistory - 4);
+  el<HTMLButtonElement>('heatNext').disabled = heatOffset === 0;
+}
+
+function renderHeat(stats: Stats): void {
+  const host = el<HTMLElement>('heatmap');
+  host.replaceChildren();
+
+  const today = startOfDay(Date.now());
+  // Columns are calendar weeks starting Sunday, so the last one is the week we are in.
+  const thisWeek = today - new Date(today).getDay() * DAY_MS;
+  const firstWeek = thisWeek - (HEAT_WEEKS - 1 + heatOffset) * WEEK_MS;
+
+  const peak = Math.max(...stats.byDay.values(), 1);
+
+  const months = document.createElement('div');
+  months.className = 'months';
+  months.style.gridTemplateColumns = `repeat(${HEAT_WEEKS}, 1fr)`;
+
+  const days = document.createElement('div');
+  days.className = 'days';
+  // Sunday, Wednesday, Friday only — seven labels at this size is a wall of text, and the
+  // rows in between are read by position anyway.
+  WEEKDAYS.forEach((name, index) => {
+    const label = document.createElement('span');
+    label.textContent = index % 2 === 0 ? name : '';
+    days.appendChild(label);
+  });
+
+  const cells = document.createElement('div');
+  cells.className = 'cells';
+  cells.style.gridTemplateColumns = `repeat(${HEAT_WEEKS}, 1fr)`;
+
+  let lastMonth = -1;
+  for (let week = 0; week < HEAT_WEEKS; week++) {
+    const columnStart = new Date(firstWeek + week * WEEK_MS);
+    if (columnStart.getMonth() !== lastMonth) {
+      lastMonth = columnStart.getMonth();
+      // Not on the final column: a label there has nothing under it to name.
+      if (week < HEAT_WEEKS - 1) {
+        const label = document.createElement('span');
+        label.style.gridColumn = `${week + 1} / span 3`;
+        label.textContent = MONTHS[lastMonth];
+        months.appendChild(label);
+      }
+    }
+
+    for (let day = 0; day < 7; day++) {
+      const date = firstWeek + week * WEEK_MS + day * DAY_MS;
+      const words = stats.byDay.get(date) ?? 0;
+      const cell = document.createElement('i');
+
+      if (date > today) cell.className = 'future';
+      else if (words > 0) {
+        const level = Math.min(4, Math.ceil((words / peak) * 4));
+        cell.className = `l${level}`;
+      }
+      if (
+        stats.streakEnd > 0 &&
+        date <= stats.streakEnd &&
+        date > stats.streakEnd - stats.streak * DAY_MS
+      ) {
+        cell.classList.add('streak');
+      }
+
+      cell.title =
+        date > today ? '' : `${new Date(date).toLocaleDateString('uz-UZ')} — ${words} so‘z`;
+      cells.appendChild(cell);
+    }
+  }
+
+  host.append(months, days, cells);
+}
+
+el<HTMLButtonElement>('heatPrev').addEventListener('click', () => {
+  heatOffset += 4;
+  renderStreak(computeStats(entries));
+});
+
+el<HTMLButtonElement>('heatNext').addEventListener('click', () => {
+  heatOffset = Math.max(0, heatOffset - 4);
+  renderStreak(computeStats(entries));
+});
+
+// ------------------------------------------------------------- your voice
+
+/**
+ * Words too common to be interesting in a "what do you talk about" list.
+ *
+ * Deliberately short and deliberately three-language: the list only has to keep the top of
+ * the chips from being the same four function words for everybody. Anything below four
+ * characters is dropped outright, which handles most of the rest.
+ */
+const STOP_WORDS = new Set([
+  'uchun',
+  'bilan',
+  'keyin',
+  'lekin',
+  'ammo',
+  'ular',
+  'meni',
+  'sizga',
+  'menga',
+  'ham',
+  'yoki',
+  'kerak',
+  'bo‘ldi',
+  'что',
+  'это',
+  'как',
+  'так',
+  'вот',
+  'быть',
+  'если',
+  'when',
+  'that',
+  'this',
+  'with',
+  'have',
+  'from',
+  'they',
+  'there',
+  'about',
+  'just',
+  'because'
+]);
+
+function renderVoice(stats: Stats): void {
+  const host = el<HTMLElement>('voiceRows');
+  host.replaceChildren();
+
+  const rows: Array<[string, string]> = [
+    ['Eng tez diktovka', stats.bestWpm > 0 ? `${stats.bestWpm} so‘z/daq` : '—'],
+    ['Eng uzun diktovka', formatDuration(Math.round(stats.longestMs / 1000))],
+    [
+      'O‘rtacha davomiylik',
+      formatDuration(stats.dictations > 0 ? Math.round(stats.seconds / stats.dictations) : 0)
+    ],
+    ['Jami gapirilgan', formatDuration(stats.seconds)],
+    [
+      'Faol kunda o‘rtacha',
+      `${stats.activeDays > 0 ? Math.round(stats.words / stats.activeDays) : 0} so‘z`
+    ]
+  ];
+
+  for (const [label, value] of rows) {
+    const row = document.createElement('div');
+    row.className = 'metric-row';
+    const span = document.createElement('span');
+    span.textContent = label;
+    const b = document.createElement('b');
+    b.className = 'trail';
+    b.textContent = value;
+    row.append(span, b);
+    host.appendChild(row);
+  }
+
+  renderTopWords();
+}
+
+function renderTopWords(): void {
+  const host = el<HTMLElement>('topWords');
+  host.replaceChildren();
+
+  // The same notion of a word the counter uses, so the two panes can't disagree.
+  const pattern = new RegExp(`[\\p{L}\\p{N}${WORD_CHARS}]+`, 'gu');
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    for (const match of entry.text.toLowerCase().matchAll(pattern)) {
+      const word = match[0];
+      if (word.length < 4 || STOP_WORDS.has(word)) continue;
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+    }
+  }
+
+  const top = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 16);
+
+  if (top.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'insight-empty';
+    empty.textContent = 'Bir nechta diktovkadan keyin shu yerda paydo bo‘ladi.';
+    host.appendChild(empty);
+    return;
+  }
+
+  for (const [word, count] of top) {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    const b = document.createElement('b');
+    // A transcript is arbitrary text; this is the one place in the pane that renders it.
+    b.textContent = word;
+    const span = document.createElement('span');
+    span.textContent = String(count);
+    chip.append(b, span);
+    host.appendChild(chip);
+  }
+}
+
+// ----------------------------------------------------------------- tabs
+
+/*
+ * The chart is redrawn on every switch rather than once: a bar that grows from the axis
+ * while its pane is `display: none` has finished growing by the time anyone sees it.
+ */
+for (const tab of document.querySelectorAll<HTMLButtonElement>('#insightTabs .tab')) {
+  tab.addEventListener('click', () => {
+    const name = tab.dataset.tab;
+    for (const other of document.querySelectorAll<HTMLElement>('#insightTabs .tab')) {
+      const on = other === tab;
+      other.classList.toggle('on', on);
+      other.setAttribute('aria-selected', String(on));
+    }
+    for (const pane of document.querySelectorAll<HTMLElement>('.tab-pane')) {
+      pane.classList.toggle('on', pane.dataset.tab === name);
+    }
+    if (name === 'voice') renderChart();
+  });
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** Drawing height of the chart in CSS pixels; the SVG has no viewBox, so 1 unit = 1 px. */
+const CHART_H = 112;
+
+function renderChart(): void {
+  const today = startOfDay(Date.now());
+  const buckets: number[] = [];
+  for (let i = 13; i >= 0; i--) {
+    const day = today - i * DAY_MS;
+    const words = entries
+      .filter((entry) => startOfDay(entry.createdAt) === day)
+      .reduce((sum, entry) => sum + countWords(entry.text), 0);
+    buckets.push(words);
+  }
+
+  const peak = Math.max(...buckets, 1);
+  chartEl.replaceChildren();
+
+  /*
+   * Drawn as SVG rather than as a row of divs, and that is a deliberate retreat: as DOM
+   * elements the bars would not keep the height they were given — flex item, absolutely
+   * positioned, pixels, percentages and `!important` all resolved to the full height of
+   * the chart, so every wordless day drew a full-height slab that read as a day of solid
+   * dictation. In SVG the height is geometry rather than a layout suggestion.
+   *
+   * No viewBox: the SVG's user units are CSS pixels, so `rx` stays round and only the x
+   * axis is expressed in percentages, which is exactly the axis that should stretch with
+   * the window.
+   */
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', String(CHART_H));
+  svg.setAttribute('role', 'img');
+
+  const slot = 100 / buckets.length;
+
+  buckets.forEach((words, index) => {
+    const date = new Date(today - (13 - index) * DAY_MS);
+    // A floor of 3px so a wordless day is still a visible tick rather than nothing at all.
+    const height = words > 0 ? Math.max(7, (words / peak) * (CHART_H - 4)) : 3;
+
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('x', `${index * slot + slot * 0.18}%`);
+    rect.setAttribute('width', `${slot * 0.64}%`);
+    rect.setAttribute('y', String(CHART_H - height));
+    rect.setAttribute('height', String(height));
+    rect.setAttribute('rx', '5');
+    rect.setAttribute('class', words > 0 ? 'bar' : 'bar empty');
+    rect.style.animationDelay = `${index * 26}ms`;
+
+    const title = document.createElementNS(SVG_NS, 'title');
+    title.textContent = `${date.toLocaleDateString('uz-UZ')} — ${words} so‘z`;
+    rect.appendChild(title);
+
+    svg.appendChild(rect);
+  });
+
+  const labels = document.createElement('div');
+  labels.className = 'labels';
+  buckets.forEach((_, index) => {
+    const label = document.createElement('div');
+    label.textContent = WEEKDAYS[new Date(today - (13 - index) * DAY_MS).getDay()];
+    labels.appendChild(label);
+  });
+
+  chartEl.append(svg, labels);
+}
+
+// ------------------------------------------------------------------- style
+
+const styleFillersEl = el<HTMLInputElement>('styleFillers');
+const stylePunctuationEl = el<HTMLInputElement>('stylePunctuation');
+const stylePreviewEl = el<HTMLElement>('stylePreview');
 const languageEl = el<HTMLSelectElement>('language');
+
+/**
+ * What each tone does to the same sentence.
+ *
+ * Written out rather than generated, and labelled as a recording in the UI: showing a live
+ * example would mean spending a real transcription every time somebody clicked a radio
+ * button, and the point of the preview is to explain the setting, not to prove it.
+ */
+const TONE_SAMPLES: Record<StyleSettings['tone'], string> = {
+  verbatim:
+    'salom, men bugun, ha, bugun ertalab yig‘ilishga bora olmayman, chunki shifokorga yozilganman',
+  tidy: 'salom, men bugun ertalab yig‘ilishga bora olmayman, chunki shifokorga yozilganman',
+  formal:
+    'assalomu alaykum. bugun ertalabki yig‘ilishda qatnasha olmayman — shifokor qabuliga yozilganman.'
+};
+
+function selectedTone(): StyleSettings['tone'] {
+  const checked = document.querySelector<HTMLInputElement>('input[name="tone"]:checked');
+  const value = checked?.value;
+  return value === 'tidy' || value === 'formal' ? value : 'verbatim';
+}
+
+function renderStyle(): void {
+  const style = settings.style;
+  const radio = document.querySelector<HTMLInputElement>(
+    `input[name="tone"][value="${style.tone}"]`
+  );
+  if (radio) radio.checked = true;
+  styleFillersEl.checked = style.removeFillers;
+  stylePunctuationEl.checked = style.punctuation;
+  languageEl.value = settings.language;
+  paintStyle();
+}
+
+/** Reflect the current choices — the selected card, and the sample sentence. */
+function paintStyle(): void {
+  const tone = selectedTone();
+  for (const choice of document.querySelectorAll<HTMLElement>('.choice')) {
+    choice.classList.toggle('on', choice.dataset.tone === tone);
+  }
+
+  let sample = TONE_SAMPLES[tone];
+  if (!styleFillersEl.checked && tone === 'verbatim') {
+    sample = sample.replace('men bugun, ha, bugun', 'men, eee, bugun, ha, bugun');
+  }
+  if (stylePunctuationEl.checked) {
+    sample = sample.charAt(0).toUpperCase() + sample.slice(1);
+  } else {
+    sample = sample
+      .replace(/[.,—;:!?]/g, '')
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+  }
+
+  // Re-trigger the fade so a change is visible even when the text barely moves.
+  stylePreviewEl.style.opacity = '0';
+  stylePreviewEl.textContent = sample;
+  requestAnimationFrame(() => {
+    stylePreviewEl.style.opacity = '1';
+  });
+}
+
+async function saveStyle(): Promise<void> {
+  paintStyle();
+  const style: StyleSettings = {
+    tone: selectedTone(),
+    removeFillers: styleFillersEl.checked,
+    punctuation: stylePunctuationEl.checked
+  };
+  if (await patch({ style })) toast('Saqlandi');
+}
+
+for (const input of document.querySelectorAll<HTMLInputElement>('input[name="tone"]')) {
+  input.addEventListener('change', () => void saveStyle());
+}
+styleFillersEl.addEventListener('change', () => void saveStyle());
+stylePunctuationEl.addEventListener('change', () => void saveStyle());
+
+languageEl.addEventListener('change', () => {
+  void patch({ language: languageEl.value as Language }).then((ok) => ok && toast('Saqlandi'));
+});
+
+// -------------------------------------------------------------- scratchpad
+
+const scratchpadEl = el<HTMLTextAreaElement>('scratchpadText');
+const scratchpadMsgEl = el<HTMLElement>('scratchpadMsg');
+let scratchpadTimer: number | undefined;
+
+scratchpadEl.addEventListener('input', () => {
+  scratchpadMsgEl.textContent = 'Saqlanmoqda…';
+  // Debounced: this fires on every keystroke, and a dictation into the pane arrives as a
+  // burst of them. One write per pause is plenty.
+  window.clearTimeout(scratchpadTimer);
+  scratchpadTimer = window.setTimeout(async () => {
+    const words = countWords(scratchpadEl.value);
+    if (await patch({ scratchpad: scratchpadEl.value })) {
+      scratchpadMsgEl.textContent = `Saqlandi · ${words} so‘z`;
+    }
+  }, 600);
+});
+
+// ---------------------------------------------------------------- settings
+
+const settingsModalEl = el<HTMLElement>('settingsModal');
 const deviceEl = el<HTMLSelectElement>('device');
 const micTestEl = el<HTMLButtonElement>('micTest');
 const micMsgEl = el<HTMLElement>('micMsg');
+const userNameEl = el<HTMLInputElement>('userName');
 const launchEl = el<HTMLInputElement>('launchAtLogin');
 const showIdlePillEl = el<HTMLInputElement>('showIdlePill');
 const saveHistoryEl = el<HTMLInputElement>('saveHistory');
-const saveEl = el<HTMLButtonElement>('save');
-const saveMsgEl = el<HTMLElement>('saveMsg');
 const meter = createMeter(el<HTMLElement>('meter'));
 
-async function loadSettings(settings: Settings): Promise<void> {
-  // The main process sends the key back masked; showing the mask means "already set".
-  apiKeyEl.value = settings.apiKey;
-  languageEl.value = settings.language;
-  launchEl.checked = settings.launchAtLogin;
-  showIdlePillEl.checked = settings.showIdlePill;
-  saveHistoryEl.checked = settings.saveHistory;
+/**
+ * Everything in the modal saves the moment it changes — there is no Save button.
+ *
+ * With a key and a model in here that would have been the wrong call: a half-typed key
+ * saved on every keystroke is a broken key. What is left is a device, a language, a name
+ * and three switches, and for those a Save button is only a way to lose your change by
+ * closing the window.
+ */
+function bindInstantSave(): void {
+  deviceEl.addEventListener('change', () => void patch({ deviceId: deviceEl.value }));
+  launchEl.addEventListener('change', () => void patch({ launchAtLogin: launchEl.checked }));
+  showIdlePillEl.addEventListener(
+    'change',
+    () => void patch({ showIdlePill: showIdlePillEl.checked })
+  );
+  saveHistoryEl.addEventListener(
+    'change',
+    () => void patch({ saveHistory: saveHistoryEl.checked })
+  );
 
-  const count = await fillDevices(deviceEl, settings.deviceId);
-  if (count === 0) setMsg(micMsgEl, 'Mikrofon topilmadi — ffmpeg o‘rnatilganini tekshiring', 'err');
+  // On `change` rather than `input`: the greeting reads better when it updates once, on the
+  // way out of the field, than on every letter of somebody's name.
+  userNameEl.addEventListener('change', async () => {
+    if (!(await patch({ userName: userNameEl.value }))) return;
+    settings = await window.api.getSettings();
+    userNameEl.value = settings.userName;
+    renderGreeting();
+  });
 }
 
-keyTestEl.addEventListener('click', () => {
-  void runKeyTest(apiKeyEl, keyTestEl, keyMsgEl, languageEl.value as Language);
-});
+bindInstantSave();
 
 micTestEl.addEventListener('click', () => {
   void micTest.toggle(deviceEl.value, meter, micTestEl, micMsgEl);
 });
 
-saveEl.addEventListener('click', async () => {
-  saveEl.disabled = true;
-  const result = await window.api.setSettings({
-    apiKey: apiKeyEl.value,
-    language: languageEl.value as Language,
-    deviceId: deviceEl.value,
-    launchAtLogin: launchEl.checked,
-    showIdlePill: showIdlePillEl.checked,
-    saveHistory: saveHistoryEl.checked
-  });
-  saveEl.disabled = false;
-
-  if (result.ok) {
-    setMsg(saveMsgEl, 'Saqlandi', 'ok');
-    setTimeout(() => setMsg(saveMsgEl, ''), 2000);
-  } else {
-    setMsg(saveMsgEl, result.error ?? 'Saqlab bo‘lmadi', 'err');
-  }
+el<HTMLButtonElement>('copyPath').addEventListener('click', () => {
+  void window.api.copyText(el<HTMLElement>('historyPath').textContent ?? '');
+  toast('Manzil nusxalandi');
 });
 
-// ---------------------------------------------------------------- updates
+el<HTMLButtonElement>('clearAll').addEventListener('click', () => {
+  if (entries.length === 0) return;
+  if (!confirm(`${entries.length} ta yozuv butunlay o‘chiriladi. Davom etamizmi?`)) return;
+  void window.api.clearHistory();
+  toast('Tarix tozalandi');
+});
+
+/** Which group of rows the modal is showing. */
+function showSettingsPane(name: string): void {
+  for (const pane of document.querySelectorAll<HTMLElement>('.modal-pane')) {
+    pane.classList.toggle('on', pane.dataset.pane === name);
+  }
+  for (const item of document.querySelectorAll<HTMLElement>('.modal-nav-item')) {
+    item.classList.toggle('on', item.dataset.pane === name);
+  }
+}
+
+for (const item of document.querySelectorAll<HTMLElement>('.modal-nav-item')) {
+  item.addEventListener('click', () => showSettingsPane(item.dataset.pane ?? 'general'));
+}
+
+async function openSettings(): Promise<void> {
+  // Re-read rather than trusting the cache: a dictation into the notes pane, or a second
+  // window, can have changed something since this one last looked.
+  settings = await window.api.getSettings();
+  userNameEl.value = settings.userName;
+  languageEl.value = settings.language;
+  launchEl.checked = settings.launchAtLogin;
+  showIdlePillEl.checked = settings.showIdlePill;
+  saveHistoryEl.checked = settings.saveHistory;
+
+  showSettingsPane('general');
+  settingsModalEl.classList.remove('hidden');
+  // The sidebar item stays lit while the modal is up, so it is obvious what is open.
+  for (const button of document.querySelectorAll<HTMLElement>('.nav-item')) {
+    button.classList.toggle('on', button.dataset.section === 'settings');
+  }
+
+  const count = await fillDevices(deviceEl, settings.deviceId);
+  if (count === 0) setMsg(micMsgEl, 'Mikrofon topilmadi — ffmpeg o‘rnatilganini tekshiring', 'err');
+}
+
+async function closeSettings(): Promise<void> {
+  // The microphone must not stay open behind a closed dialog.
+  await micTest.stop();
+  setMsg(micMsgEl, '');
+  settingsModalEl.classList.add('hidden');
+  // Put the highlight back on whichever pane is actually showing underneath.
+  const open = [...views].find(([, view]) => view.classList.contains('on'))?.[0];
+  for (const button of document.querySelectorAll<HTMLElement>('.nav-item')) {
+    button.classList.toggle('on', button.dataset.section === open);
+  }
+}
+
+el<HTMLButtonElement>('settingsClose').addEventListener('click', () => void closeSettings());
+el<HTMLElement>('settingsScrim').addEventListener('click', () => void closeSettings());
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || settingsModalEl.classList.contains('hidden')) return;
+  void closeSettings();
+});
+
+function renderGreeting(): void {
+  const name = settings.userName.trim();
+  greetingEl.textContent = name ? `Xush kelibsiz, ${name}` : 'Xush kelibsiz';
+}
+
+// ----------------------------------------------------------------- updates
 
 const updateCheckEl = el<HTMLButtonElement>('updateCheck');
 const updateInstallEl = el<HTMLButtonElement>('updateInstall');
@@ -320,9 +1385,25 @@ const updateMsgEl = el<HTMLElement>('updateMsg');
 updateCheckEl.addEventListener('click', () => void window.api.checkForUpdates());
 updateInstallEl.addEventListener('click', () => void window.api.installUpdate());
 
+/** A ready update is the only thing that puts a badge on the Settings item. */
+function setSettingsBadge(on: boolean): void {
+  const item = document.querySelector<HTMLElement>('.nav-item[data-section="settings"]');
+  if (!item) return;
+  const existing = item.querySelector('.dot');
+  if (on && !existing) {
+    const dot = document.createElement('span');
+    dot.className = 'dot tail';
+    dot.textContent = '1';
+    item.appendChild(dot);
+  } else if (!on && existing) {
+    existing.remove();
+  }
+}
+
 window.api.onUpdateStatus((status: UpdateStatus) => {
   updateInstallEl.classList.toggle('hidden', status.state !== 'ready');
   updateCheckEl.disabled = status.state === 'checking' || status.state === 'downloading';
+  setSettingsBadge(status.state === 'ready');
 
   switch (status.state) {
     case 'checking':
@@ -350,108 +1431,223 @@ window.api.onUpdateStatus((status: UpdateStatus) => {
   }
 });
 
-// ---------------------------------------------------------------- welcome view
+// -------------------------------------------------------------------- help
 
-const wKeyEl = el<HTMLInputElement>('wKey');
-const wKeyTestEl = el<HTMLButtonElement>('wKeyTest');
-const wKeyMsgEl = el<HTMLElement>('wKeyMsg');
-const wKeyLinkEl = el<HTMLButtonElement>('wKeyLink');
+// Copying rather than opening: the renderer has no shell access by design, and the tray
+// menu's "Loglar papkasi" already opens the folder from main, where it belongs.
+el<HTMLButtonElement>('openLogs').addEventListener('click', () => {
+  void window.api.copyText(el<HTMLElement>('helpPath').textContent ?? '');
+  toast('Manzil nusxalandi');
+});
+
+// ----------------------------------------------------------------- account
+
+/**
+ * The account pane.
+ *
+ * Main owns the session; this draws what it is told and asks for changes. In particular there
+ * is no token here and never should be — `AccountState` carries a name, an email and two
+ * counters, which is everything this window needs to render and nothing it could leak.
+ *
+ * Sign-in is the one flow in the app that does not resolve where it starts: the button opens
+ * a browser and returns immediately, and the signed-in state arrives later on
+ * `onAccountChanged`. Every button below is written for that — none of them await a result
+ * that will not come.
+ */
+let account: AccountState = { user: null, plan: null, error: '' };
+
+const accSignedOutEl = el<HTMLElement>('accountSignedOut');
+const accSignedInEl = el<HTMLElement>('accountSignedIn');
+const accMsgEl = el<HTMLElement>('accMsg');
+const accPlanMsgEl = el<HTMLElement>('accPlanMsg');
+const accBarEl = el<HTMLElement>('accBarFill');
+const wAuthMsgEl = el<HTMLElement>('wAuthMsg');
+
+/** Tiyin to a readable so'm figure: 5000000 -> "50 000 so'm". */
+function formatSom(tiyin: number): string {
+  const som = Math.round(tiyin / 100);
+  return `${som.toLocaleString('ru-RU').replace(/ /g, ' ')} so‘m`;
+}
+
+/** Initials for the avatar circle. Falls back to the email when Google sent no name. */
+function initials(name: string, email: string): string {
+  const source = name.trim() || email.trim();
+  if (!source) return '?';
+  const parts = source.split(/[\s.@_-]+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2);
+  return parts[0][0] + parts[1][0];
+}
+
+function renderAccount(): void {
+  const signedIn = account.user !== null;
+  accSignedOutEl.classList.toggle('hidden', signedIn);
+  accSignedInEl.classList.toggle('hidden', !signedIn);
+
+  setMsg(accMsgEl, account.error, account.error ? 'err' : '');
+  // The welcome screen's copy of the sign-in state, so a failure there is visible without
+  // making the user close the welcome flow to find out why nothing happened.
+  setMsg(
+    wAuthMsgEl,
+    account.error || (signedIn ? `Kirdingiz: ${account.user?.email ?? ''}` : ''),
+    account.error ? 'err' : signedIn ? 'ok' : ''
+  );
+
+  if (!account.user) return;
+
+  // textContent, not innerHTML: a display name comes from Google and is arbitrary text.
+  el<HTMLElement>('accAvatar').textContent = initials(account.user.name, account.user.email);
+  el<HTMLElement>('accName').textContent = account.user.name || 'Hisob';
+  el<HTMLElement>('accEmail').textContent = account.user.email;
+
+  const plan = account.plan;
+  const isPro = plan?.plan === 'pro';
+
+  el<HTMLElement>('accPlanName').textContent = isPro ? 'Pro' : 'Bepul';
+  el<HTMLElement>('accPlanBadge').textContent = isPro ? 'Pro' : 'Free';
+  el<HTMLElement>('accPlanBadge').className = isPro ? 'badge new' : 'badge';
+
+  const upgradeEl = el<HTMLButtonElement>('accUpgrade');
+  upgradeEl.classList.toggle('hidden', isPro);
+  if (plan && plan.priceTiyin > 0) {
+    upgradeEl.textContent = `Pro’ga o‘tish — ${formatSom(plan.priceTiyin)}/oy`;
+  }
+
+  // `plan === null` is "we haven't heard back yet", which must not be drawn as 0 / 0 — that
+  // reads as a broken account rather than a pending request.
+  if (!plan) {
+    el<HTMLElement>('accUsage').textContent = 'Yuklanmoqda…';
+    accBarEl.style.width = '0%';
+    el<HTMLElement>('accExpires').textContent = '';
+    return;
+  }
+
+  const left = Math.max(0, plan.limit - plan.used);
+  el<HTMLElement>('accUsage').textContent =
+    `Bugun: ${plan.used} / ${plan.limit} diktovka — ${left} ta qoldi`;
+
+  const ratio = plan.limit > 0 ? Math.min(1, plan.used / plan.limit) : 0;
+  accBarEl.style.width = `${Math.round(ratio * 100)}%`;
+  accBarEl.className = ratio >= 1 ? 'out' : ratio >= 0.66 ? 'low' : '';
+
+  if (isPro && plan.expiresAt) {
+    const until = new Date(plan.expiresAt);
+    el<HTMLElement>('accExpires').textContent = Number.isNaN(until.getTime())
+      ? ''
+      : `Pro amal qiladi: ${until.toLocaleDateString('uz-UZ')} gacha`;
+  } else {
+    el<HTMLElement>('accExpires').textContent = '';
+  }
+}
+
+async function beginSignIn(): Promise<void> {
+  setMsg(accMsgEl, 'Brauzer ochilmoqda…');
+  setMsg(wAuthMsgEl, 'Brauzer ochilmoqda…');
+  const result = await window.api.signIn();
+  if (!result.ok) {
+    // The Uzbek line main already put on `account.error` is the one to show; this is the
+    // fallback for a failure that never reached that state.
+    const message = account.error || 'Kirishni boshlab bo‘lmadi';
+    setMsg(accMsgEl, message, 'err');
+    setMsg(wAuthMsgEl, message, 'err');
+    return;
+  }
+  setMsg(accMsgEl, 'Brauzerda davom eting…');
+  setMsg(wAuthMsgEl, 'Brauzerda davom eting…');
+}
+
+el<HTMLButtonElement>('accSignIn').addEventListener('click', () => void beginSignIn());
+el<HTMLButtonElement>('wSignIn').addEventListener('click', () => void beginSignIn());
+
+el<HTMLButtonElement>('accSignOut').addEventListener('click', async () => {
+  await window.api.signOut();
+  toast('Chiqdingiz');
+});
+
+el<HTMLButtonElement>('accRefresh').addEventListener('click', async () => {
+  setMsg(accPlanMsgEl, 'Yangilanmoqda…');
+  await window.api.refreshPlan();
+  setMsg(accPlanMsgEl, '');
+});
+
+el<HTMLButtonElement>('accUpgrade').addEventListener('click', async () => {
+  setMsg(accPlanMsgEl, 'To‘lov sahifasi ochilmoqda…');
+  const error = await window.api.startCheckout();
+  if (error) {
+    setMsg(accPlanMsgEl, error, 'err');
+    return;
+  }
+  // The plan flips when Payme calls our server, not when the browser opens — so the honest
+  // thing to say is "come back and refresh", not "you are now Pro".
+  setMsg(accPlanMsgEl, 'To‘lovdan so‘ng «Yangilash» tugmasini bosing', 'ok');
+});
+
+window.api.onAccountChanged((state) => {
+  account = state;
+  renderAccount();
+});
+
+// ----------------------------------------------------------------- welcome
+
+const welcomeEl = el<HTMLElement>('welcome');
+const wNameEl = el<HTMLInputElement>('wName');
 const wDeviceEl = el<HTMLSelectElement>('wDevice');
 const wMicTestEl = el<HTMLButtonElement>('wMicTest');
 const wMicMsgEl = el<HTMLElement>('wMicMsg');
-const wSaveEl = el<HTMLButtonElement>('wSave');
-const wSaveMsgEl = el<HTMLElement>('wSaveMsg');
+const wMsgEl = el<HTMLElement>('wMsg');
 const wMeter = createMeter(el<HTMLElement>('wMeter'));
-
-wKeyLinkEl.addEventListener('click', () => void window.api.openExternal('https://aisha.group'));
-
-wKeyTestEl.addEventListener('click', async () => {
-  const ok = await runKeyTest(wKeyEl, wKeyTestEl, wKeyMsgEl, 'uz');
-  // Save a working key straight away, so step 3's "try it" box actually works before the
-  // user has pressed anything else.
-  if (!ok) return;
-  const result = await window.api.setSettings({ apiKey: wKeyEl.value });
-  if (result.ok) setMsg(wKeyMsgEl, 'Kalit ishlaydi va saqlandi ✓', 'ok');
-  else setMsg(wKeyMsgEl, result.error ?? 'Kalitni saqlab bo‘lmadi', 'err');
-});
 
 wMicTestEl.addEventListener('click', () => {
   void micTest.toggle(wDeviceEl.value, wMeter, wMicTestEl, wMicMsgEl);
 });
 
-wSaveEl.addEventListener('click', async () => {
-  if (!wKeyEl.value.trim()) {
-    setMsg(wSaveMsgEl, 'Avval API kalitini kiriting', 'err');
-    return;
-  }
-
-  wSaveEl.disabled = true;
-  const result = await window.api.setSettings({
-    apiKey: wKeyEl.value,
-    deviceId: wDeviceEl.value
-  });
-  wSaveEl.disabled = false;
-
-  if (!result.ok) {
-    setMsg(wSaveMsgEl, result.error ?? 'Saqlab bo‘lmadi', 'err');
-    return;
-  }
-
-  await micTest.stop();
-  await start('history');
-});
-
+// Registered here, below both mic-test buttons' declarations, so the closure can never be
+// invoked inside their temporal dead zone — it closes over wMicTestEl/wMicMsgEl above.
 window.api.onMicError((message) => {
   const target = micTest.active?.button === wMicTestEl ? wMicMsgEl : micMsgEl;
   void micTest.stop();
   setMsg(target, message, 'err');
 });
 
-// ---------------------------------------------------------------- routing
-
-const views: Record<Tab, HTMLElement> = {
-  welcome: el<HTMLElement>('view-welcome'),
-  history: el<HTMLElement>('view-history'),
-  settings: el<HTMLElement>('view-settings')
-};
-
-async function show(tab: Tab): Promise<void> {
-  // The microphone must not stay open on a screen the user has navigated away from.
+el<HTMLButtonElement>('wDone').addEventListener('click', async () => {
+  const ok = await patch({
+    userName: wNameEl.value,
+    deviceId: wDeviceEl.value,
+    onboarded: true
+  });
+  if (!ok) {
+    setMsg(wMsgEl, 'Saqlab bo‘lmadi', 'err');
+    return;
+  }
   await micTest.stop();
+  welcomeEl.classList.add('hidden');
+  renderGreeting();
+  await show('dictation');
+});
 
-  for (const [name, view] of Object.entries(views)) {
-    view.classList.toggle('hidden', name !== tab);
-  }
+// ------------------------------------------------------------------- start
 
-  // The tab bar is meaningless during the welcome flow — there is nothing to go back to.
-  tabsEl.classList.toggle('hidden', tab === 'welcome');
-  for (const button of tabsEl.querySelectorAll('button')) {
-    button.classList.toggle('on', button.dataset.tab === tab);
-  }
+async function start(): Promise<void> {
+  settings = await window.api.getSettings();
+  account = await window.api.getAccount();
+  renderAccount();
 
-  if (tab === 'history') await loadHistory();
-}
+  const version = `gapir me v${await window.api.getVersion()}`;
+  el<HTMLElement>('helpVersion').textContent = version;
+  el<HTMLElement>('modalVersion').textContent = version;
+  renderGreeting();
+  renderStyle();
+  el<HTMLTextAreaElement>('scratchpadText').value = settings.scratchpad;
+  setMaximized(false);
 
-for (const button of tabsEl.querySelectorAll('button')) {
-  button.addEventListener('click', () => void show(button.dataset.tab as Tab));
-}
-
-window.api.onRoute((tab) => void show(tab === 'settings' ? 'settings' : 'history'));
-
-function requestedTab(): Tab {
-  return window.location.hash.replace('#', '') === 'settings' ? 'settings' : 'history';
-}
-
-/** Load everything main owns, then decide which screen the user is actually on. */
-async function start(forced?: Tab): Promise<void> {
-  const settings = await window.api.getSettings();
-
-  versionEl.textContent = `v${await window.api.getVersion()}`;
-  await loadSettings(settings);
   await fillDevices(wDeviceEl, settings.deviceId);
+  wNameEl.value = settings.userName;
 
-  // No key means nothing works yet, so the welcome flow outranks whichever tab was asked for.
-  await show(forced ?? (settings.apiKey ? requestedTab() : 'welcome'));
+  await show(requestedSection());
+
+  // The welcome flow sits on top of everything rather than replacing it, so closing it
+  // reveals a window that is already loaded and on the right section.
+  if (!settings.onboarded) welcomeEl.classList.remove('hidden');
 }
 
 void start();

@@ -1,34 +1,58 @@
-# Whisper UZ
+# gapir me
 
 Push-to-talk dictation for Uzbek. Hold **Ctrl+CapsLock**, speak, release — the text lands
 wherever your cursor is, in any app.
 
-Like Wispr Flow, but Uzbek. The open-source dictation tools all run Whisper locally,
-which is precisely why none of them work in Uzbek. This one uses
-[Aisha](https://aisha.group), an Uzbek-native speech engine, and handles the
-Uzbek/Russian code-switching that real speech in Tashkent is full of.
+Like Wispr Flow, but Uzbek. The open-source dictation tools all run Whisper locally, which
+is precisely why none of them work in Uzbek. This one sends the audio to **Google Gemini**,
+which handles Uzbek — including the Uzbek/Russian code-switching that real speech in
+Tashkent is full of — and bills per audio token, which works out to cents per hour of
+speech rather than dollars per hour.
+
+**Sign in with Google and dictate.** There is nothing to paste and nothing to choose — no API
+key, no model, no Settings screen that can be filled in wrongly. Everyone dictates on the same
+server-side key and the same model. A free plan covers 30 dictations a day; **Pro** raises that
+and is paid with Uzcard or Humo through Payme.
 
 ## How it works
 
 ```
-Ctrl+Caps down ──▶ ffmpeg captures 16 kHz mono PCM ──▶ streamed to Aisha over WebSocket
-                                                                     │
-Ctrl+Caps up ──────▶ final transcript ◀───────────────────────────────┘
-                          │
+Ctrl+Caps down ──▶ ffmpeg captures 16 kHz mono PCM ──▶ buffered
+                                                          │
+Ctrl+Caps up ──────▶ the clip goes to our server ─────────┘
+                          │  checks your plan and today's quota,
+                          │  then calls Gemini with a key you never see
                           ▼
-        logged to history → clipboard saved → pasted with Ctrl+V → clipboard restored
+              logged to history → clipboard saved
+                    → pasted with Ctrl+V → clipboard restored
 ```
 
 **Esc** while recording cancels — nothing is pasted.
 
-A small pill sits at the bottom centre of the screen for the whole session: a dim logo at
-rest, expanding into a live waveform and partial transcript while you speak, then a green
-tick. It is click-through and unfocusable by design — see
-[overlay.ts](src/main/overlay.ts). Turn the resting logo off in Settings if it gets in the
+A pill sits at the bottom centre of the screen for the whole session, and it has four
+shapes. At rest it is a hairline bar, breathing very slowly. Hold the hotkey and it becomes
+a small black capsule of live bars. Let go and the capsule widens a little, those same bars
+flatten into a row of dots and a spinner steps round beside them. Then it collapses back to
+the hairline — with a tick on the way past, if the paste landed.
+
+Point at the resting bar and it widens to name the hotkey; it is click-through and
+unfocusable by design, so that hover is the only thing you can do to it — see
+[overlay.ts](src/main/overlay.ts). Turn the resting bar off in Settings if it gets in the
 way of a fullscreen game.
 
-Everything you dictate is kept in a searchable list in the app window, so a paste that
-landed in the wrong place is recoverable. Open it from the tray.
+## The app window
+
+Open it from the tray. It has five panes and a settings dialog, and everything in them is
+local to your machine.
+
+| Pane | What it does |
+| --- | --- |
+| **Diktovka** | Everything you have dictated, grouped by day and searchable — so a paste that landed in the wrong place is recoverable |
+| **Statistika** | Words, speaking rate, streak, and the last fourteen days, computed from that log |
+| **Uslub** | Verbatim, tidied or formal; fillers; punctuation. Each one is a rule in the prompt |
+| **Qaydlar** | A notes pane you can dictate into |
+| **Sozlamalar** | A dialog over the window: microphone, dictation language, name, startup, the resting pill, history and privacy. Everything saves as you change it |
+| **Yordam** | The three things that actually go wrong, and what to do about them |
 
 ## Installing (for users)
 
@@ -43,6 +67,35 @@ keystrokes looks exactly like a keylogger to a heuristic scanner. The fix is a c
 and needs a verifiable legal entity. It is the highest-leverage thing to buy once this has
 users; until then, report false positives to Microsoft after each release.
 
+## Accounts and API keys
+
+**The Gemini key is not in the app.** It lives as a secret in a Supabase project, and the app
+reaches it only through an Edge Function that first checks who you are and how much you have
+dictated today. Setting that up — the Supabase project, Google sign-in, and Payme — is
+documented step by step in [docs/supabase-setup.md](docs/supabase-setup.md).
+
+This is a change from how the app used to work, and it was made for one reason: a key shipped
+inside an installer is a key anyone who downloads it can extract. That was an acceptable trade
+while the app was free. It is not one if people are paying, and it left no way to tell one
+user from another — nothing to attach a plan or a limit to.
+
+What the app holds instead is a Supabase session, stored in `%APPDATA%\gapir me\auth.json`
+and encrypted with Windows DPAPI. The project URL and `anon` key in
+[src/main/supabase-config.ts](src/main/supabase-config.ts) *are* committed, and that is
+correct: the anon key identifies the project, and everything it can reach is decided by the
+row-level-security policies in `supabase/migrations/`.
+
+**There is no user key field.** It existed, and it was removed: a dictation tool whose first
+screen asks for a Google API key is a tool most people never dictate with. `GEMINI_API_KEY` in
+a developer's `.env` still bypasses the server entirely, so working on the app doesn't spend
+real users' quota — a packaged build has no environment to read it from.
+
+**The bundled pool is on its way out.** `resources/gemini-keys.json` still ships as a fallback
+for builds made before a backend was configured, and the release workflow writes it from the
+`GEMINI_KEYS` secret via [scripts/write-keys.mjs](scripts/write-keys.mjs). Once the proxy is
+proven, Phase 5 of the setup doc deletes all of it — at which point no Gemini key exists
+anywhere in the installer.
+
 ## Developing
 
 Requires **Node 22+** and **ffmpeg** on PATH (`winget install ffmpeg`) — the bundled copy is
@@ -53,15 +106,26 @@ npm install
 npm run dev
 ```
 
-Then open **Settings** from the tray icon and paste your Aisha API key. Get one at
-[aisha.group](https://aisha.group) — billing is pay-as-you-go at 425 UZS/min (~$0.034),
-with no monthly fee. The **Tekshirish** button validates it against Aisha before you save.
-
-For development you can instead put the key in a `.env` file at the project root:
+For development, put a key in a `.env` file at the project root. It takes precedence over the
+server, so working on the app never spends real users' quota — and it is how you work on
+anything except the account and billing flows:
 
 ```
-AISHA_API_KEY=...
+GEMINI_API_KEY=...              # or GOOGLE_API_KEY — both are read
+WHISPER_UZ_BUNDLED_KEYS=...     # optional: exercise the shipped key pool
+WHISPER_UZ_GEMINI_MODEL=...     # optional: try a model without cutting a release
+WHISPER_UZ_GEMINI_REALTIME=1    # optional: take the Live socket instead of batch
+SUPABASE_URL=...                # optional: point at a staging project
+SUPABASE_ANON_KEY=...
 ```
+
+**To work on sign-in, quota or payment, remove `GEMINI_API_KEY` from `.env`** — with it set,
+`resolveRoute()` takes the direct path and never touches the server. The `[state]` log line
+tells you which happened: `route=proxy` means the request went through Supabase,
+`route=direct` means it did not.
+
+Get a key free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+`npm run spike -- --models` lists what it can actually reach.
 
 ### Working without a key
 
@@ -72,21 +136,26 @@ npm run dev:mock
 Runs with a fake transcriber, so the hotkey, overlay, level meter, history and paste path
 can all be exercised offline and unbilled.
 
-### Verifying the Aisha socket
+### Comparing models
 
 ```bash
 # record a few seconds of speech first
 ffmpeg -f dshow -i audio="<device>" -ar 16000 -ac 1 -f s16le -t 6 sample.pcm
-npm run spike
+npm run spike -- --model gemini-3.1-flash-lite,gemini-3.6-flash
 ```
 
-Logs every frame the realtime endpoint sends back, verbatim.
+Same audio through each model, transcripts and latencies side by side, with token counts.
+Which model to ship is a question about your own voice; this is how you answer it rather
+than assume it. `npm run spike -- --models` lists what your key can reach.
+
+`npm run dev -- --log-frames` dumps every Gemini Live socket frame and any batch response
+that parsed to no transcript.
 
 ## Releasing
 
 ```bash
 npm run ffmpeg   # fetch the bundled ffmpeg.exe (~108 MB, pinned + digest-checked)
-npm run dist     # -> release/Whisper-UZ-Setup.exe
+npm run dist     # -> release/gapir-me-Setup.exe
 ```
 
 Or let CI do it — tag a commit and
@@ -115,22 +184,26 @@ MB and is the obvious next optimisation.
 | [src/main/state.ts](src/main/state.ts) | The dictation state machine — the only module that coordinates the others |
 | [src/main/hotkey.ts](src/main/hotkey.ts) | Ctrl+CapsLock hold/release via a low-level keyboard hook |
 | [src/main/audio.ts](src/main/audio.ts) | ffmpeg capture, device enumeration, RMS, WAV wrapping |
-| [src/main/stt/](src/main/stt/) | Swappable STT adapters — Aisha realtime, Aisha batch, mock, key check |
+| [src/main/stt/](src/main/stt/) | The proxy adapter, the direct Gemini batch and Live adapters, the prompt, the mock |
+| [src/main/auth.ts](src/main/auth.ts) | Google sign-in and the encrypted Supabase session |
+| [src/main/keys.ts](src/main/keys.ts) | The bundled key pool and its cooldowns — pre-Supabase, on its way out |
+| [supabase/](supabase/) | The schema and the three Edge Functions: `transcribe`, `checkout`, `payme` |
 | [src/main/inject.ts](src/main/inject.ts) | The clipboard save → paste → restore dance |
 | [src/main/overlay.ts](src/main/overlay.ts) | The floating pill that must never steal focus |
 | [src/main/history.ts](src/main/history.ts) | The dictation log |
-| [src/renderer/app/](src/renderer/app/) | The window: history, settings, first-run welcome |
+| [src/renderer/app/](src/renderer/app/) | The window: all six panes and the first-run welcome |
+| [src/renderer/fonts/](src/renderer/fonts/) | The two brand typefaces, bundled because the renderers may not fetch |
 
 ## Things that look wrong but aren't
 
-Six decisions here are load-bearing and will look like mistakes to anyone tidying up:
+These decisions are load-bearing and will look like mistakes to anyone tidying up:
 
 **Audio comes from an ffmpeg subprocess, not `getUserMedia`.** `uiohook-napi`'s keyboard
 hook [silently stops firing on Windows once a getUserMedia stream is
 opened](https://github.com/SnosMe/uiohook-napi/issues/54) — which is exactly this app's
 usage pattern, and would break the hotkey after the first dictation. The subprocess also
-happens to emit precisely the 16 kHz mono s16le that Aisha's socket wants, so audio pipes
-through with no conversion.
+happens to emit precisely the 16 kHz mono s16le that Gemini takes, so audio pipes through
+with no conversion.
 
 **The hotkey module sends keystrokes as well as reading them.** `uiohook-napi` observes
 input but cannot suppress it, and CapsLock toggles on key *down* — so the OS flips caps
@@ -153,6 +226,18 @@ into, and paste the text into the wrong place. The window is a fixed 360×80 and
 inside it grows in CSS, because resizing a transparent always-on-top window on Windows
 flickers and lags a frame behind.
 
+**The overlay reacts to hover without ever receiving a mouse event, and main polls the
+cursor to do it.** The obvious implementation is `setIgnoreMouseEvents(true, { forward:
+true })` plus mouseenter/mouseleave in the renderer, and it was tried first. On Windows that
+forwarding runs off a low-level mouse hook inside Electron, and against this window —
+transparent, unfocusable, `type: 'toolbar'` — it delivered nothing at all: the renderer saw
+no moves and the pill never reacted. So main hit-tests `getCursorScreenPoint()` itself and
+sends the answer to the renderer, which is a poll, and is the honest cost of the feature. It
+is bounded to the only situation where hover means anything: a resting pill actually on
+screen. During a dictation, and whenever `showIdlePill` is off, the interval is cleared. The
+hovered hit box is deliberately bigger than the resting one, so the cursor cannot sit on the
+hint it just summoned, be judged outside, and collapse it.
+
 **The whole bootstrap is gated on the single-instance lock, not just `app.quit()`.**
 `quit()` is a request, not a return: the losing instance would otherwise reach `whenReady`
 and call `uIOhook.start()` while already tearing down, and uiohook-napi answers that by
@@ -162,21 +247,52 @@ aborting the process with a native fatal error rather than throwing.
 name.** Friendly names are localised — on a Russian-locale Windows they arrive as
 Cyrillic and get mangled by the console codepage. Alternative names are ASCII and stable.
 
+**Gemini's request shape is discovered by trying, not by reading the error.** The four
+entries in `SHAPES` in [gemini-batch.ts](src/main/stt/gemini-batch.ts) exist because Google
+renamed the "don't think about it" field between model generations and rejects the wrong
+spelling with a bare *400 Request contains an invalid argument* that names no argument. The
+winning shape is memoised per model id.
+
+**The Statistika chart is SVG, not divs.** As DOM elements the bars would not keep the
+height they were given — as a flex item, absolutely positioned, in pixels, in percentages
+and with `!important`, the height resolved to the full height of the chart — so every day
+with no dictations drew a full-height bar that read as a day of solid work. In SVG a height
+is geometry rather than a layout suggestion.
+
 ## Privacy
 
-Audio is streamed to Aisha and never stored. Transcripts *are* stored, in plaintext, at
-`%APPDATA%/whisper-uz/history.json` — the app window shows you the exact path. It is not
+Audio goes to Google and is not stored by this app. Transcripts *are* stored, in plaintext,
+at `%APPDATA%/gapir me/history.json` — the app window shows you the exact path. It is not
 encrypted because the list has to be searchable, and anything that can read `%APPDATA%` can
 read this process's memory anyway. What you get instead is a switch to turn the log off and
-a button to wipe it. The API key is separate and *is* encrypted, with `safeStorage` (DPAPI).
+a button to wipe it. `settings.json` holds no credential; the Supabase session lives beside it
+in `auth.json`, encrypted with DPAPI.
+
+**Since dictation moved behind a server, that server sees things too, and it is worth being
+precise about which.** It receives the audio of each dictation, forwards it to Google, and
+returns the text — it does not store the audio or the transcript. What it does keep is one row
+per dictation holding the timestamp, the clip length and the *character count*, which is what
+the daily quota is counted from; the server log records the same figures and deliberately not
+the transcript, unlike the local log below. Signing in also stores your Google email and
+display name. There is no telemetry beyond that.
+
+The diagnostic log next to them, `logs/main.log`, is the one thing that quotes transcripts
+back: the `[state]` line records the first 200 characters of each one so a failed dictation
+can be diagnosed at all. It stays on that machine — nothing uploads it — but it is worth
+knowing about before sending the file to anyone, and the tray's *Loglar papkasi* item opens
+the folder it lives in.
+
+Note what the shared key means, because it is the trade this app makes on the user's behalf:
+every dictation goes through a Google account this project controls, and Google's terms for
+free-tier keys allow that audio to be used for improving their models. That is the price of an
+app that works without asking anyone to register with Google first. Anyone who needs it
+otherwise should build from source with their own key in a `.env`, which bypasses the server
+entirely.
 
 ## Not built yet
 
 Deliberately absent, in rough priority order:
 
-- **AI cleanup layer** — an LLM pass to strip Uzbek filler words (*yani*, *anaqa*), add
-  punctuation and format lists. This is Wispr's real differentiator and raw STT output
-  needs it.
 - **macOS.** Windows-only for now, and the blocker is practical: a Mac build can't be
   produced on Windows, and the Accessibility / Input Monitoring / Microphone prompts can't
   be verified by CI. Four files need platform branches when the time comes —
@@ -185,7 +301,9 @@ Deliberately absent, in rough priority order:
   `overlay.ts` (`toolbar` → `panel`, plus `app.dock.hide()`). Shipping it to anyone else
   also needs an Apple Developer account for signing and notarization.
 - **Code signing** — see Installing above.
-- **Latin/Cyrillic toggle** — Uzbek is split across both scripts.
-- **Custom dictionary** — so names and jargon stop getting mangled.
+- **Latin/Cyrillic toggle** — Uzbek is split across both scripts, and the prompt currently
+  pins output to Latin.
 - **Configurable hotkey** — currently hardcoded to Ctrl+CapsLock, changeable only by
   editing `TRIGGER` in [src/main/hotkey.ts](src/main/hotkey.ts).
+- **Per-app style** — Wispr changes register between a chat window and a document; here the
+  Uslub pane is global.

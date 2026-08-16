@@ -1,0 +1,167 @@
+/*
+ * The brand's typefaces, bundled rather than fetched.
+ *
+ * The renderers run under `default-src 'self'`, so a <link> to fonts.googleapis.com is a
+ * request that never resolves and a window that silently falls back to Segoe UI — which is
+ * the system font of the operating system, not the voice of this product. Vite emits these
+ * .woff2 files next to the bundle and rewrites the url()s below, so they load from disk in
+ * a packaged build and from the dev server under `npm run dev`.
+ *
+ * Three families, matching the website: Figtree carries the interface, EB Garamond is the
+ * display face (headings and figures), Geist Mono is the odd technical accent (paths, the
+ * hotkey). All three are variable fonts — one file per subset covers every weight — and all
+ * three are OFL, so shipping them inside the installer is licensed.
+ *
+ * Cyrillic is the wrinkle. People dictate Russian into this app and read it back in their
+ * history, but Figtree simply has no Cyrillic glyphs — so Onest, the previous UI face, stays
+ * in the stack as a Cyrillic-only fallback. Its two subsets below carry unicode-ranges the
+ * Figtree files never claim, which means the browser routes Russian text to Onest
+ * per-character while everything Latin renders in Figtree. EB Garamond has real Cyrillic of
+ * its own, so headings need no such trick. Delete the Onest files only together with the
+ * Russian dictation feature.
+ *
+ * 'latin' carries U+02BB, the modifier letter in "oʻzbek" — that range is why the latin
+ * subset is non-negotiable for every family here.
+ *
+ * `size-adjust` on the Garamond faces: an old-style serif has a far smaller x-height than a
+ * geometric sans, so at equal px it reads two sizes smaller. Scaling the face itself keeps
+ * every heading rule in index.html expressed in honest pixel sizes instead of each one
+ * carrying a private "+2px because Garamond" correction.
+ */
+
+/* Figtree (variable, 300–900) — latin-ext */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('./figtree-300-900-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* Figtree (variable, 300–900) — latin */
+@font-face {
+  font-family: 'Figtree';
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url('./figtree-300-900-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* EB Garamond (variable, 400–800) — cyrillic-ext */
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-400-800-cyrillic-ext.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* EB Garamond (variable, 400–800) — cyrillic */
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-400-800-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* EB Garamond (variable, 400–800) — latin-ext */
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-400-800-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* EB Garamond (variable, 400–800) — latin */
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-400-800-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* EB Garamond italic (variable, 400–800) — a true italic cut, not a synthesised slant.
+   The four subsets mirror the roman so an italic word inside Russian text stays Garamond. */
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: italic;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-italic-400-800-cyrillic-ext.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: italic;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-italic-400-800-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: italic;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-italic-400-800-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: italic;
+  font-weight: 400 800;
+  font-display: swap;
+  size-adjust: 110%;
+  src: url('./ebgaramond-italic-400-800-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Geist Mono (variable, 100–900) — latin-ext */
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./geistmono-100-900-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* Geist Mono (variable, 100–900) — latin */
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./geistmono-100-900-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Onest — Cyrillic fallback only (see the header comment). The latin subsets are gone;
+   these two ranges are exactly the ones Figtree cannot claim. */
+@font-face {
+  font-family: 'Onest';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./onest-400-700-cyrillic-ext.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+@font-face {
+  font-family: 'Onest';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('./onest-400-700-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}

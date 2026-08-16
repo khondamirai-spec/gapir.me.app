@@ -67,9 +67,9 @@ export async function injectText(text: string): Promise<void> {
   const snap = snapshot();
   clipboard.writeText(text);
 
-  // The user has just let go of the hotkey, but the OS may not have processed both
-  // keyups yet. Synthesising Ctrl+V while it still believes Delete is held would send
-  // the target app a different chord than we intend — so let the physical keys settle.
+  // The user has just let go of the hotkey, but the OS may not have processed both keyups
+  // yet. Synthesising Ctrl+V while it still believes CapsLock is held would send the target
+  // app a different chord than we intend — so let the physical keys settle.
   await sleep(SETTLE_DELAY_MS);
 
   try {

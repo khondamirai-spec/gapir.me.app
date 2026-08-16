@@ -6,13 +6,73 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
     />
-    <title>Whisper UZ</title>
+    <title>gapir me</title>
     <style>
+      /* =========================================================================
+         The floating pill.
+
+         Dark, small and unbothered — it sits over somebody's actual work all day,
+         so at rest it is a mark you can ignore, and it only becomes a piece of UI
+         while a dictation is happening. The window never resizes (see
+         src/main/overlay.ts for why); everything below is the pill growing inside
+         a fixed, click-through window.
+
+         The shape language is deliberately borrowed from Wispr Flow, measured off
+         a screen recording of it frame by frame: a hairline capsule at rest, a
+         black capsule of live bars while you speak, a narrow one holding just a
+         spinner while the model works, then a fast collapse back to the hairline.
+
+         The thinking state used to keep the eleven bars, flattened into a dim row
+         of dots beside the spinner, so that "it stopped listening" was legible
+         without a word of text. It reads as clutter at this size — eleven dots and
+         a spinner both saying "wait" — so the bars now leave with the microphone
+         and the spinner carries that state alone. The meter itself is untouched:
+         while the hotkey is held it is the only proof the mic hears you.
+
+         What must survive a tidy-up: every state is a fixed width and height on
+         #pill, so the capsule morphs. `width: auto` cannot be transitioned, and a
+         pill that jumps between sizes reads as a glitch rather than as a thing
+         that moved.
+
+         There is no caption on the recording or thinking states, on purpose. At
+         90px wide there is no room for one, and the reference proves it does not
+         need one — the only text left is an error, which is the one message the
+         picture genuinely cannot carry.
+         ========================================================================= */
+
       * {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
         user-select: none;
+      }
+
+      /* ---- Palette ----
+         This is the one surface in the app that is dark by necessity rather than
+         by taste: the pill sits on top of somebody else's window, and cream here
+         would vanish into every white document it lands on. So the pill is the
+         brand's dark mode, and dark mode swaps the two colors' roles — cream
+         becomes the ink, and the burgundy survives only as the near-black it is
+         drawn on.
+
+         Nothing here is #000 or #fff. Both are off-brand, and at this size both
+         read distinctly colder than the rest of the app; --ink-900 is as solid
+         as black against a bright document while still being made of the same
+         two colors as everything else. The translucent states are written as
+         rgba() literals of these same values, because a var() cannot carry an
+         alpha into rgba(). */
+      :root {
+        --cream: #ffeee0;
+        --ink-900: #3a0116;
+        /* The brand's functional green and red (#3F6B4F, #A8321E) are picked for
+           cream backgrounds and sink into the pill. Each is lifted toward cream
+           by roughly the amount the text ramp is in dark mode: the same colour
+           at its dark-mode step, not a new one. */
+        --ok: #6fa37e;
+        --err: #e0705a;
+        /* The same faces as the app window; see src/renderer/fonts/fonts.css. Onest stays
+           in the stack as the Cyrillic fallback — Figtree has no Cyrillic glyphs. */
+        --font-ui: 'Figtree', 'Onest', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
       }
 
       html,
@@ -21,13 +81,13 @@
         height: 100%;
         background: transparent;
         overflow: hidden;
-        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-family: var(--font-ui);
         -webkit-font-smoothing: antialiased;
       }
 
       /*
        * Bottom-anchored: the window's bottom edge sits a fixed gap above the taskbar, so
-       * anchoring the pill there too means the idle logo keeps that exact gap and the pill
+       * anchoring the pill there too means the idle mark keeps that exact gap and the pill
        * grows upward, away from the taskbar, as it expands.
        */
       body {
@@ -37,125 +97,255 @@
       }
 
       /*
-       * The window never resizes — this element is the whole animation. Widths are fixed
-       * per state rather than content-derived because `width: auto` cannot be transitioned.
+       * A transparent pad around the pill, and the size hover is measured against. The
+       * resting pill is a 46×10 sliver — a target that small is one a user misses, and
+       * missing it means never discovering the hotkey the hint exists to name.
+       *
+       * The measuring is done in main, not here: the window is click-through and Chromium
+       * never sees the cursor, so `hitRect()` in src/main/overlay.ts mirrors these two
+       * numbers. Change one and change the other.
        */
+      #hit {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        min-width: 64px;
+        min-height: 30px;
+      }
+
+      /* ---- At rest ----
+         A hairline capsule and nothing else: no glyph, no fill worth the name. It is the
+         smallest thing that still says "the app is here" — 46×10 over someone's document
+         is furniture, and anything larger is an interruption they did not ask for.
+
+         The transition declared here is the one that runs on the way BACK to rest, because
+         a transition is read off the state being transitioned *to*. That is why the collapse
+         curve lives on the base rule and the expansion curve on .active: the reference
+         collapses with a small undershoot — 39×7 before settling at 40×8 — and springs the
+         last pixel back, which is what the overshooting cubic-bezier below reproduces. */
       #pill {
+        position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
         width: 46px;
-        height: 28px;
-        padding: 0;
-        border-radius: 16px;
-        background: rgba(18, 18, 22, 0.92);
-        border: 1px solid rgba(255, 255, 255, 0.09);
-        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
-        color: #f4f4f5;
-        /* Resting state: present enough to prove the app is running, dim enough to forget. */
-        opacity: 0.38;
+        height: 10px;
+        border-radius: 999px;
+        /* The hover hint is revealed by the pill widening over it rather than by fading in:
+           a `display` swap can't be transitioned, and laying the text out inside a 46px pill
+           just to hold it at opacity 0 shoves everything off centre. */
+        overflow: hidden;
+        background: rgba(58, 1, 22, 0.5);
+        border: 1px solid rgba(255, 238, 224, 0.4);
+        /* The brand allows exactly one shadow and reserves it for this window.
+           Its geometry is used verbatim; only the alpha is raised, because the
+           published 0.08 is tuned for cream and this lands on whatever the user
+           happens to have open. */
+        box-shadow: 0 8px 32px rgba(89, 2, 34, 0.28);
+        color: var(--cream);
+        opacity: 0.82;
         transition:
-          width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-          height 240ms cubic-bezier(0.22, 1, 0.36, 1),
-          padding 240ms cubic-bezier(0.22, 1, 0.36, 1),
-          border-radius 240ms ease,
-          opacity 180ms ease,
-          background-color 180ms ease;
+          width 230ms cubic-bezier(0.34, 1.4, 0.64, 1),
+          height 230ms cubic-bezier(0.34, 1.4, 0.64, 1),
+          padding 230ms cubic-bezier(0.34, 1.4, 0.64, 1),
+          gap 230ms cubic-bezier(0.34, 1.4, 0.64, 1),
+          opacity 140ms ease,
+          background-color 180ms ease,
+          border-color 180ms ease;
       }
 
-      #pill.active,
-      #pill.error {
+      /* Very slowly, very slightly, the resting bar breathes. It is the only thing on screen
+         that says the app is alive rather than merely drawn — the reference has nothing of
+         the kind, but the reference is not something you install and then wonder about. */
+      #pill:not(.active):not(.error):not(.done):not(.hover) {
+        animation: breathe 4.2s ease-in-out infinite;
+      }
+
+      @keyframes breathe {
+        0%,
+        100% {
+          opacity: 0.62;
+        }
+        50% {
+          opacity: 0.92;
+        }
+      }
+
+      /* ---- Hover ----
+         The resting mark is deliberately anonymous, which leaves nowhere to find out what
+         it wants from you. Pointing at it is the one moment a user has actually asked, so
+         that is where the hotkey gets named — and only there, because a permanent caption
+         would be a permanent distraction.
+
+         Hover only applies to the resting pill: during a dictation the pill is already
+         expanded and saying something more useful, and moving the cursor over it must not
+         change what it says. */
+      #pill.hover:not(.active):not(.error):not(.done) {
         justify-content: flex-start;
-        gap: 12px;
-        width: 340px;
-        padding: 0 16px;
+        gap: 9px;
+        width: 216px;
+        height: 32px;
+        padding: 0 13px;
         opacity: 1;
+        background: rgba(58, 1, 22, 0.96);
+        border-color: rgba(255, 238, 224, 0.14);
       }
 
+      #hint {
+        display: none;
+        flex-shrink: 0;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 400;
+        letter-spacing: 0.1px;
+        color: rgba(255, 238, 224, 0.6);
+      }
+
+      #hint b {
+        font-weight: 600;
+        color: var(--cream);
+      }
+
+      #pill.hover:not(.active):not(.error):not(.done) #hint {
+        display: block;
+      }
+
+      /* ---- Speaking, and thinking ----
+         Fully opaque and borderless: the capsule has to read as a solid object against a
+         bright document as well as a dark one, and a translucent one picks up whatever is
+         underneath it and turns muddy. The brand's deepest ink rather than #000 — at this
+         value the difference is invisible against a document but keeps the pill made of
+         the same two colors as the rest of the app, which matters where the two are seen
+         together (the pill sits below the app window). */
       #pill.active {
-        height: 56px;
-        border-radius: 28px;
+        width: 90px;
+        height: 32px;
+        padding: 0 14px;
+        gap: 10px;
+        opacity: 1;
+        background: var(--ink-900);
+        border-color: transparent;
+        box-shadow: 0 8px 32px rgba(89, 2, 34, 0.42);
+        /* Outward: no spring. The pill is arriving under a hand that is still holding the
+           hotkey down, and an overshoot there reads as a wobble rather than as speed. */
+        transition:
+          width 200ms cubic-bezier(0.22, 1, 0.36, 1),
+          height 200ms cubic-bezier(0.22, 1, 0.36, 1),
+          padding 200ms cubic-bezier(0.22, 1, 0.36, 1),
+          gap 200ms cubic-bezier(0.22, 1, 0.36, 1),
+          opacity 120ms ease,
+          background-color 160ms ease,
+          border-color 160ms ease;
+      }
+
+      /* The bars leave with the microphone, so this holds a 16px spinner and nothing else:
+         44px is the same capsule the tick gets in .done, which makes "working" and "done"
+         two frames of one shape rather than two different pills. (It was 122px while the
+         dots stayed on through transcription.) */
+      #pill.thinking {
+        width: 44px;
+        gap: 0;
+      }
+
+      /* A live partial transcript is the one thing worth spending width on, and only the
+         Live API ever sends one (off by default), so it is a variant rather than the shape.
+         Without this the text would be clipped by the 90px capsule with no sign it existed. */
+      #pill.active.with-text {
+        justify-content: flex-start;
+        width: 300px;
+        height: 42px;
       }
 
       #pill.done {
-        gap: 8px;
-        width: 84px;
-        height: 34px;
-        border-radius: 17px;
+        width: 44px;
+        height: 32px;
+        gap: 0;
         opacity: 1;
+        background: var(--ink-900);
+        border-color: transparent;
       }
 
       #pill.error {
         /* Error text is a sentence over up to three lines, so it needs the extra height. */
-        height: 64px;
-        border-radius: 20px;
-        background: rgba(52, 16, 18, 0.95);
-        border-color: rgba(248, 113, 113, 0.35);
+        justify-content: flex-start;
+        gap: 12px;
+        width: 336px;
+        height: 62px;
+        padding: 0 17px;
+        opacity: 1;
+        background: rgba(58, 1, 22, 0.96);
+        border-color: rgba(224, 112, 90, 0.45);
       }
 
       /* ---- The mark ----
-         Same microphone glyph scripts/make-icons.mjs draws for the tray and installer,
-         inlined as SVG: the overlay's CSP is `default-src 'self'` and an inline element
-         needs no asset load at all. */
+         The gapir.me lips, painted via -webkit-mask-image from the real artwork (see the
+         #logo rule below): the artwork is burgundy and the pill is near-black, so masking
+         keeps the shape and lets the colour follow the state. It is only ever shown beside
+         words — the hover hint and an error — since the resting bar and the waveform say
+         what they are without it.
+
+         Lips only, no waveform: below roughly 32px the bars close up into a filled mouth and
+         the mark reads as a smudge, so the tray (16px), this pill (17px) and the app
+         window's sidebar (22px) all drop them. Only the download page, at 44px, and
+         resources/icon.png, at 256, draw the whole thing. See scripts/make-icons.mjs. */
+      /* 20px, where the microphone this replaced was 17: the mark is about 2:1, so a square
+         box that size renders it only ~10px tall and it reads as an afterthought beside the
+         hint text. Width is what carries the weight here, not the box. */
+      /* 40x20 rather than a 20px square: the mark is about 2:1, and squeezing it into a
+         square either shrinks it to nothing or distorts it. */
       #logo {
+        display: none;
         flex-shrink: 0;
-        width: 18px;
-        height: 18px;
-        color: #8b7cf0;
-        transition: color 180ms ease;
+        width: 40px;
+        height: 20px;
+        background: var(--cream);
+        -webkit-mask-image: url('../assets/logo.png');
+        -webkit-mask-repeat: no-repeat;
+        -webkit-mask-position: center;
+        -webkit-mask-size: contain;
+      }
+
+      #pill.hover:not(.active):not(.error):not(.done) #logo,
+      #pill.error #logo {
+        display: block;
       }
 
       #pill.error #logo {
-        color: #f87171;
+        background: var(--err);
       }
 
-      /* Everything except the logo is hidden while collapsed. */
-      #body {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        min-width: 0;
-        flex: 1;
-        opacity: 0;
-        transition: opacity 140ms ease;
-      }
-
-      #pill:not(.active):not(.error):not(.done) #body {
-        display: none;
-      }
-
-      #pill.active #body,
-      #pill.error #body,
-      #pill.done #body {
-        opacity: 1;
-      }
-
-      /* ---- Level meter ---- */
+      /* ---- Level meter, and the dots it becomes ----
+         Eleven bars at 3px wide on a 5px pitch: the reference's proportions (a bar block
+         a little over half the capsule's width) rather than its literal pixels, which came
+         off a denser display. */
       #bars {
         display: flex;
         align-items: center;
-        gap: 3px;
-        height: 26px;
+        gap: 2px;
+        height: 20px;
         flex-shrink: 0;
       }
 
       .bar {
         width: 3px;
-        min-height: 3px;
+        height: 3px;
         border-radius: 2px;
-        background: #f87171;
-        transition: height 70ms linear;
+        background: var(--cream);
+        transition:
+          height 70ms linear,
+          background-color 160ms ease;
       }
 
-      /* ---- Spinner, shown while transcribing ---- */
+      /* ---- Spinner, shown while transcribing ----
+         Twelve spokes stepping round once every 1.05s, not a smoothly sweeping arc: the
+         step is what makes it read as "working" at 16px, where a continuous rotation of
+         something this small just shimmers. Spokes are built in overlay.ts. */
       #spinner {
-        width: 18px;
-        height: 18px;
+        width: 16px;
+        height: 16px;
         flex-shrink: 0;
-        border: 2px solid rgba(255, 255, 255, 0.18);
-        border-top-color: #a78bfa;
-        border-radius: 50%;
-        animation: spin 700ms linear infinite;
+        color: var(--cream);
+        animation: spin 1.05s steps(12) infinite;
       }
 
       @keyframes spin {
@@ -166,13 +356,22 @@
 
       /* ---- Success tick ---- */
       #check {
-        width: 16px;
-        height: 16px;
+        width: 17px;
+        height: 17px;
         flex-shrink: 0;
-        color: #4ade80;
+        color: var(--ok);
+        animation: pop 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      @keyframes pop {
+        from {
+          transform: scale(0.5);
+          opacity: 0;
+        }
       }
 
       #label {
+        min-width: 0;
         font-size: 13px;
         font-weight: 500;
         letter-spacing: 0.1px;
@@ -181,45 +380,56 @@
         text-overflow: ellipsis;
       }
 
+      /* An empty label is still a flex item, and a flex item still gets the gap on both
+         sides of it — which is how a 10px gap between the dots and the spinner silently
+         becomes 20px in the state that has no text. */
+      #label:empty {
+        display: none;
+      }
+
       /* Error messages are sentences, not statuses — let them wrap instead of clipping. */
       #pill.error #label {
         white-space: normal;
-        line-height: 1.3;
+        line-height: 1.32;
         font-size: 12px;
         display: -webkit-box;
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
-      }
-
-      #label .hint {
-        display: block;
-        font-size: 11px;
-        font-weight: 400;
-        opacity: 0.55;
-        margin-top: 1px;
+        overflow: hidden;
       }
 
       .hidden {
         display: none !important;
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        #pill,
+        #check {
+          animation: none !important;
+        }
+        /* The spinner still has to turn — it is the only thing telling the user the app has
+           not hung — but a 12-step tick is far calmer than a sweep. */
+        #pill,
+        .bar {
+          transition-duration: 1ms !important;
+        }
+      }
     </style>
   </head>
   <body>
-    <div id="pill">
-      <svg id="logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="9.5" y="4.7" width="5" height="9.3" rx="2.5" fill="currentColor" />
-        <path
-          d="M7.2 11.5a4.8 4.8 0 0 0 9.6 0"
-          stroke="currentColor"
-          stroke-width="1.35"
-          stroke-linecap="round"
-        />
-        <path d="M12 16.3v2.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        <path d="M9.5 19h5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
-      </svg>
-      <div id="body">
+    <div id="hit">
+      <div id="pill">
+        <!-- The real artwork, painted in the pill's cream by using it as a mask rather than
+             as an image: the file is burgundy on transparent, which on this near-black
+             capsule would be a hole. Masking keeps the mark's exact shape and lets the
+             colour follow the state — cream normally, red when a dictation failed. -->
+        <span id="logo" aria-hidden="true"></span>
+        <div id="hint">Gapiring <b>Ctrl + Caps&nbsp;Lock</b></div>
+        <!-- Order matters: dots, then the partial transcript if there is one, then the
+             spinner — so the spinner stays at the right-hand end in every variant. -->
         <div id="bars"></div>
-        <div id="spinner" class="hidden"></div>
+        <div id="label"></div>
+        <svg id="spinner" class="hidden" viewBox="0 0 16 16" aria-hidden="true"></svg>
         <svg id="check" class="hidden" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path
             d="M3 8.5l3.2 3.2L13 5"
@@ -229,7 +439,6 @@
             stroke-linejoin="round"
           />
         </svg>
-        <div id="label"></div>
       </div>
     </div>
     <script type="module" src="./overlay.ts"></script>

@@ -3,10 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Whisper UZ — o‘zbekcha gapirib yozing</title>
+    <title>gapir me — oʻzbekcha gapirib yozing</title>
     <meta
       name="description"
-      content="Ctrl+Caps Lock ni bosib turib gapiring — aytganingiz kursor turgan joyga matn bo‘lib yoziladi. Windows uchun bepul, ochiq kodli."
+      content="Ctrl+Caps Lock ni bosib turib gapiring — aytganingiz kursor turgan joyga matn boʻlib yoziladi. Windows uchun, bepul tarif bilan."
+    />
+    <!-- The brand faces, per design-style.md: EB Garamond for display, Figtree for UI,
+         Geist Mono for the hotkey chips. The app bundles them; the website may fetch them. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600&family=Figtree:wght@300..900&family=Geist+Mono:wght@400;500&display=swap"
     />
     <style>
       * {
@@ -15,22 +23,26 @@
         box-sizing: border-box;
       }
 
+      /* Two brand colors, everything else a mix of them — see design-style.md. */
       :root {
-        --bg: #131317;
-        --panel: #1c1c22;
-        --line: #2b2b34;
-        --text: #ececee;
-        --muted: #9a9aa3;
-        --faint: #6e6e78;
-        --accent: #7c6bd6;
-        --accent-hi: #8b7cf0;
-        --warn: #fbbf24;
+        --cream: #ffeee0;
+        --surface: #f7e2d6;
+        --line: #ebd2c9;
+        --ink: #590222;
+        --ink-900: #3a0116;
+        --ink-600: #72253e;
+        --ink-400: #8b495b;
+        --ink-300: #a46c78;
+        --font-display: 'EB Garamond', Georgia, 'Times New Roman', serif;
+        --font-ui: 'Figtree', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+        --font-mono: 'Geist Mono', 'Cascadia Mono', Consolas, monospace;
       }
 
       body {
-        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-        background: var(--bg);
-        color: var(--text);
+        font-family: var(--font-ui);
+        background: var(--cream);
+        color: var(--ink-900);
+        font-size: 16px;
         line-height: 1.6;
         -webkit-font-smoothing: antialiased;
       }
@@ -48,68 +60,68 @@
       }
 
       .mark {
-        width: 60px;
-        height: 60px;
-        margin: 0 auto 22px;
-        border-radius: 16px;
-        background: linear-gradient(#6d5ccf, #7c6bd6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #fff;
-      }
-
-      .mark svg {
-        width: 34px;
-        height: 34px;
+        display: block;
+        width: 180px;
+        height: auto;
+        margin: 0 auto 24px;
       }
 
       h1 {
-        font-size: 34px;
-        line-height: 1.2;
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: 44px;
+        line-height: 1.1;
         letter-spacing: -0.5px;
         margin-bottom: 14px;
+        color: var(--ink-900);
       }
 
       .tagline {
         font-size: 17px;
-        color: var(--muted);
-        max-width: 520px;
+        color: var(--ink-600);
+        max-width: 540px;
         margin: 0 auto 32px;
       }
 
       .kbd {
         display: inline-block;
         padding: 2px 8px;
-        border-radius: 6px;
-        background: #2a2a31;
-        border: 1px solid #3a3a44;
-        font-size: 0.88em;
-        color: #dcdce0;
+        border-radius: 8px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        font-family: var(--font-mono);
+        font-size: 0.82em;
+        color: var(--ink);
         white-space: nowrap;
       }
 
+      /* The one solid ink block on the page — the single most important action. */
       .cta {
         display: inline-flex;
         align-items: center;
         gap: 10px;
-        padding: 14px 26px;
-        border-radius: 11px;
-        background: var(--accent);
-        color: #fff;
+        padding: 14px 28px;
+        border-radius: 999px;
+        background: var(--ink);
+        color: var(--cream);
         font-size: 16px;
         font-weight: 600;
         text-decoration: none;
       }
 
       .cta:hover {
-        background: var(--accent-hi);
+        background: var(--ink-900);
+      }
+
+      .cta:focus-visible {
+        outline: 2px solid var(--ink);
+        outline-offset: 2px;
       }
 
       .cta-note {
         margin-top: 12px;
         font-size: 13px;
-        color: var(--faint);
+        color: var(--ink-400);
       }
 
       /* ---------- sections ---------- */
@@ -119,8 +131,12 @@
       }
 
       h2 {
-        font-size: 19px;
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: 26px;
+        letter-spacing: -0.3px;
         margin-bottom: 18px;
+        color: var(--ink-900);
       }
 
       .steps {
@@ -131,21 +147,23 @@
       .steps li {
         counter-increment: step;
         position: relative;
-        padding-left: 40px;
+        padding-left: 42px;
         margin-bottom: 20px;
       }
 
+      /* Outline, not filled — the download button is the page's one ink-filled block. */
       .steps li::before {
         content: counter(step);
         position: absolute;
         left: 0;
-        top: 2px;
-        width: 25px;
-        height: 25px;
+        top: 1px;
+        width: 26px;
+        height: 26px;
         border-radius: 50%;
-        background: var(--accent);
-        color: #fff;
-        font-size: 13px;
+        border: 1.5px solid var(--ink);
+        color: var(--ink);
+        font-family: var(--font-display);
+        font-size: 14px;
         font-weight: 600;
         display: flex;
         align-items: center;
@@ -155,29 +173,29 @@
       .steps strong {
         display: block;
         font-size: 15px;
+        color: var(--ink-900);
       }
 
       .steps span {
-        color: var(--muted);
+        color: var(--ink-600);
         font-size: 14.5px;
       }
 
       .callout {
-        padding: 16px 18px;
-        border-radius: 10px;
-        background: var(--panel);
+        padding: 18px 22px;
+        border-radius: 14px;
+        background: var(--surface);
         border: 1px solid var(--line);
-        border-left: 3px solid var(--warn);
         font-size: 14.5px;
-        color: var(--muted);
+        color: var(--ink-600);
       }
 
       .callout strong {
-        color: var(--text);
+        color: var(--ink-900);
       }
 
       .callout ol {
-        margin: 10px 0 0 20px;
+        margin: 10px 0 10px 20px;
       }
 
       .callout li {
@@ -191,55 +209,52 @@
       dt {
         font-weight: 600;
         margin-top: 14px;
+        color: var(--ink-900);
       }
 
       dd {
-        color: var(--muted);
+        color: var(--ink-600);
         margin-left: 0;
       }
 
       a {
-        color: var(--accent-hi);
+        color: var(--ink);
       }
 
       footer {
         padding: 36px 0 56px;
         border-top: 1px solid var(--line);
         font-size: 13px;
-        color: var(--faint);
+        color: var(--ink-400);
         text-align: center;
       }
 
       @media (max-width: 560px) {
         h1 {
-          font-size: 27px;
+          font-size: 32px;
         }
         header {
           padding: 48px 0 40px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
         }
       }
     </style>
   </head>
   <body>
     <header class="wrap">
-      <div class="mark">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="9.5" y="4.7" width="5" height="9.3" rx="2.5" fill="currentColor" />
-          <path
-            d="M7.2 11.5a4.8 4.8 0 0 0 9.6 0"
-            stroke="currentColor"
-            stroke-width="1.35"
-            stroke-linecap="round"
-          />
-          <path d="M12 16.3v2.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-          <path d="M9.5 19h5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
-        </svg>
-      </div>
+      <!-- The artwork itself (docs/logo.png, written by scripts/make-icons.mjs from the
+           same file the installer's icon comes from), not a redrawing of it. -->
+      <img class="mark" src="logo.png" alt="gapir.me" width="180" />
 
       <h1>Yozmang — gapiring</h1>
       <p class="tagline">
         <span class="kbd">Ctrl</span> + <span class="kbd">Caps Lock</span> ni bosib turib
-        gapiring. Qo‘yib yuborganingizda aytganingiz kursor turgan joyga matn bo‘lib yoziladi —
+        gapiring. Qoʻyib yuborganingizda aytganingiz kursor turgan joyga matn boʻlib yoziladi —
         Telegram, Word, brauzer, xohlagan dasturda.
       </p>
 
@@ -248,7 +263,7 @@
           <path
             d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14"
             stroke="currentColor"
-            stroke-width="2"
+            stroke-width="1.75"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
@@ -256,36 +271,36 @@
         Windows uchun yuklab olish
       </a>
       <p class="cta-note">
-        Windows 10 / 11, 64-bit · bepul va ochiq kodli · macOS versiyasi keyinroq
+        Windows 10 / 11, 64-bit · bepul tarif bilan · macOS versiyasi keyinroq
       </p>
     </header>
 
     <section class="wrap">
-      <h2>O‘rnatgandan keyin</h2>
+      <h2>Oʻrnatgandan keyin</h2>
       <ol class="steps">
         <li>
-          <strong>Aisha API kalitini oling</strong>
+          <strong>Google bilan kiring</strong>
           <span>
-            Nutqni matnga o‘girish <a href="https://aisha.group">aisha.group</a> orqali ishlaydi
-            — o‘zbek tiliga o‘rgatilgan yagona xizmat. Ro‘yxatdan o‘tib kalitni olasiz. To‘lov
-            ishlatganingizcha: daqiqasi ~425 so‘m, oylik to‘lov yo‘q.
+            Birinchi ochilishda Hisob boʻlimida Google hisobingiz bilan kirasiz — parol
+            oʻylab topish ham, karta ham kerak emas. Kirganingizdan keyin bepul tarif darhol
+            ishlaydi.
           </span>
         </li>
         <li>
-          <strong>Kalitni dasturga qo‘yib qo‘ying</strong>
+          <strong>Gapirib koʻring</strong>
           <span>
-            Dastur birinchi ochilganda o‘zi so‘raydi. “Tekshirish” tugmasi kalit ishlashini
-            darhol aytadi. Kalit shu kompyuterda shifrlangan holda saqlanadi va boshqa hech
-            qayerga yuborilmaydi.
-          </span>
-        </li>
-        <li>
-          <strong>Gapirib ko‘ring</strong>
-          <span>
-            Ekran pastida kichkina belgi paydo bo‘ladi — dastur ishlayotgani shundan bilinadi.
+            Ekran pastida kichkina belgi paydo boʻladi — dastur ishlayotgani shundan bilinadi.
             <span class="kbd">Ctrl</span> + <span class="kbd">Caps Lock</span> ni bosib turib
-            gapirsangiz, belgi kengayib ovozingizni ko‘rsatadi. Bekor qilish uchun
+            gapirsangiz, belgi kengayib ovozingizni koʻrsatadi. Bekor qilish uchun
             <span class="kbd">Esc</span>.
+          </span>
+        </li>
+        <li>
+          <strong>Bepul va Pro</strong>
+          <span>
+            Bepul tarifda kuniga 30 ta diktovka bor — limit har kuni yarim tunda yangilanadi.
+            Koʻproq kerak boʻlsa, Pro tarifi kuniga 1000 tagacha beradi; toʻlov Payme orqali,
+            narxni dasturning Hisob boʻlimida koʻrasiz.
           </span>
         </li>
       </ol>
@@ -295,15 +310,15 @@
       <h2>“Windows protected your PC” chiqsa</h2>
       <div class="callout">
         <strong>Bu normal holat — dastur hali imzolanmagan.</strong>
-        Sertifikat pullik bo‘lgani uchun hozircha yo‘q, shuning uchun Windows notanish
+        Sertifikat pullik boʻlgani uchun hozircha yoʻq, shuning uchun Windows notanish
         dasturdan ogohlantiradi. Ochish uchun:
         <ol>
           <li><strong>More info</strong> ni bosing</li>
           <li><strong>Run anyway</strong> ni bosing</li>
         </ol>
         Antivirus ham shikoyat qilishi mumkin: dastur klaviaturani tinglaydi va tugma
-        bosishini yuboradi — keylogger bilan bir xil ko‘rinadi. Kodning hammasi ochiq,
-        GitHub’da o‘qib ko‘rsangiz bo‘ladi.
+        bosishini yuboradi — keylogger bilan bir xil koʻrinadi. Kodning hammasi ochiq,
+        GitHub’da oʻqib koʻrsangiz boʻladi.
       </div>
     </section>
 
@@ -312,25 +327,33 @@
       <dl>
         <dt>Ovozim qayerga ketadi?</dt>
         <dd>
-          Faqat Aisha’ga, matnga o‘girish uchun. Ovoz hech qayerda saqlanmaydi. Aytgan
-          matnlaringiz esa kompyuteringizda tarixda qoladi — istagan payt o‘chirasiz yoki
-          butunlay yozib qo‘yishni o‘chirib tashlaysiz.
+          Avval gapir me serveriga, undan Google Gemini’ga — matnga oʻgirish uchun. Ovoz na
+          serverda, na dasturda saqlanadi. Serverda har diktovkadan faqat vaqti, yozuv
+          uzunligi va belgilar soni qoladi (kunlik limit shundan hisoblanadi), kirganingizda
+          esa Google e-pochtangiz va ismingiz. Aytgan matnlaringiz kompyuteringizda tarixda
+          qoladi — istagan payt oʻchirasiz yoki yozib qoʻyishni butunlay oʻchirib tashlaysiz.
         </dd>
 
-        <dt>Ruscha va inglizcha ham bo‘ladimi?</dt>
+        <dt>Pul toʻlash shartmi?</dt>
+        <dd>
+          Yoʻq. Bepul tarif doim ishlaydi — kuniga 30 ta diktovka koʻpchilikka yetadi. Pro
+          faqat koʻp yozadiganlar uchun.
+        </dd>
+
+        <dt>Ruscha va inglizcha ham boʻladimi?</dt>
         <dd>Ha, Sozlamalardan tilni almashtirasiz.</dd>
 
         <dt>Internet kerakmi?</dt>
-        <dd>Ha. Matnga o‘girish serverda bo‘ladi, shuning uchun internetsiz ishlamaydi.</dd>
+        <dd>Ha. Matnga oʻgirish serverda boʻladi, shuning uchun internetsiz ishlamaydi.</dd>
 
-        <dt>Aytilgan matnlarni qayerdan ko‘raman?</dt>
+        <dt>Aytilgan matnlarni qayerdan koʻraman?</dt>
         <dd>
-          Trey belgisini bosing — dastur oynasi ochiladi, hamma aytganlaringiz ro‘yxat bo‘lib
+          Trey belgisini bosing — dastur oynasi ochiladi, hamma aytganlaringiz roʻyxat boʻlib
           turadi. Bir bosishda nusxa olasiz.
         </dd>
 
-        <dt>Yangilanish o‘zi keladimi?</dt>
-        <dd>Ha, dastur yangi versiyani o‘zi topib yuklaydi va keyingi ochilishda o‘rnatadi.</dd>
+        <dt>Yangilanish oʻzi keladimi?</dt>
+        <dd>Ha, dastur yangi versiyani oʻzi topib yuklaydi va keyingi ochilishda oʻrnatadi.</dd>
       </dl>
     </section>
 
@@ -341,34 +364,43 @@
 
     <script>
       /*
-       * The download URL is derived from where this page is served rather than hardcoded:
-       * on GitHub Pages the host is <user>.github.io and the first path segment is the repo,
-       * which is everything needed to point at the latest release asset. That way renaming or
-       * transferring the repo can't leave a dead download button behind.
+       * Where the download button points.
+       *
+       * On GitHub Pages the host is <user>.github.io and the first path segment is the repo,
+       * which is everything needed to build the release URL — so that case is still derived,
+       * and renaming or transferring the repo can't leave a dead button behind.
+       *
+       * Everywhere else it falls back to the constants below. That is the case a custom
+       * domain lands in, and the earlier version of this script disabled its own download
+       * button there: the whole point of putting this page on gapir.me is to hand strangers
+       * an installer, and "the link isn't available right now" is the one thing it must never
+       * say. The constants are the cost — keep them in step with package.json's repository.
        */
       (function () {
+        var OWNER = 'khondamirai-spec';
+        var REPO = 'gapir.me.app';
+        var ASSET = 'gapir-me-Setup.exe';
+
         var host = location.hostname;
-        var user = host.endsWith('.github.io') ? host.slice(0, -'.github.io'.length) : null;
-        var repo = location.pathname.split('/').filter(Boolean)[0] || 'whisper-uz';
+        var owner = OWNER;
+        var repo = REPO;
 
-        var button = document.getElementById('download');
-        var link = document.getElementById('repo-link');
-
-        if (!user) {
-          // Opened from disk, or served from a custom domain. Guessing an owner here would
-          // hand people a 404, so say what's actually going on instead.
-          button.textContent = 'Yuklab olish havolasi hozir mavjud emas';
-          button.removeAttribute('href');
-          button.style.background = '#2a2a31';
-          button.style.cursor = 'default';
-          link.textContent =
-            'Bu sahifa GitHub Pages orqali ochilganda yuklab olish havolasi o‘zi paydo bo‘ladi.';
-          return;
+        if (host.endsWith('.github.io')) {
+          owner = host.slice(0, -'.github.io'.length);
+          repo = location.pathname.split('/').filter(Boolean)[0] || REPO;
         }
 
-        var base = 'https://github.com/' + user + '/' + repo;
-        button.href = base + '/releases/latest/download/Whisper-UZ-Setup.exe';
-        link.innerHTML = 'Kod va barcha versiyalar: <a href="' + base + '">' + base.replace('https://', '') + '</a>';
+        var base = 'https://github.com/' + owner + '/' + repo;
+
+        var button = document.getElementById('download');
+        button.href = base + '/releases/latest/download/' + ASSET;
+
+        var link = document.getElementById('repo-link');
+        var prefix = document.createTextNode('Kod va barcha versiyalar: ');
+        var anchor = document.createElement('a');
+        anchor.href = base;
+        anchor.textContent = base.replace('https://', '');
+        link.replaceChildren(prefix, anchor);
       })();
     </script>
   </body>
