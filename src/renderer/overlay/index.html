@@ -86,31 +86,106 @@
       }
 
       /*
-       * Bottom-anchored: the window's bottom edge sits a fixed gap above the taskbar, so
-       * anchoring the pill there too means the idle mark keeps that exact gap and the pill
-       * grows upward, away from the taskbar, as it expands.
-       */
-      body {
-        display: flex;
-        align-items: flex-end;
-        justify-content: center;
-      }
-
-      /*
        * A transparent pad around the pill, and the size hover is measured against. The
        * resting pill is a 46×10 sliver — a target that small is one a user misses, and
        * missing it means never discovering the hotkey the hint exists to name.
        *
        * The measuring is done in main, not here: the window is click-through and Chromium
-       * never sees the cursor, so `hitRect()` in src/main/overlay.ts mirrors these two
-       * numbers. Change one and change the other.
+       * never sees the cursor, so `hitRect()` in src/main/overlay.ts mirrors every number in
+       * this rule and the two dock rules below it. Change one and change the other.
+       *
+       * ---- Why `position: absolute` rather than flex alignment on the body ----
+       *
+       * The dock is applied on a drop, at the same moment main starts gliding the window to
+       * its new home (see glideTo in src/main/overlay.ts), so the pill has to *travel* to
+       * its new anchor rather than appear at it — a 130px sideways jump plus a quarter turn
+       * in one frame reads as a glitch. `justify-content` and `align-items` cannot be
+       * transitioned; `left`, `bottom` and `transform` all interpolate, which is the whole
+       * reason the anchoring is written this way — and it is why the right dock is
+       * `left: calc(100% - …)` rather than the `right` it obviously wants to be: `left` and
+       * `right` do not interpolate into each other.
+       *
+       * The offsets:
+       *   bottom 24px  — PAD_BOTTOM. Room for the pill's own shadow, which is `0 8px 32px`
+       *                  and so reaches offset + blur/2 = 24px below it. Anchored flush to
+       *                  the window's edge, that shadow was sliced off in a hard horizontal
+       *                  line — glow above the pill, an abrupt cut below. Main gives the
+       *                  window the pixels back by sitting flush with the work area
+       *                  (BOTTOM_GAP is 0), so the pill still floats just above the taskbar.
+       *   left 16px    — PAD_SIDE on a side dock, where the same sum is sideways.
+       *
+       * `transform-origin` is the bottom edge rather than the centre, and that is what makes
+       * the side docks work at all: the pill grows *upward* from its anchored bottom edge in
+       * every state (46×10 at rest, 64×30 hovered, 90×32 speaking), so rotating about that
+       * same edge turns "grows upward from PAD_BOTTOM" into "grows inward from PAD_SIDE"
+       * without a single number changing. Rotating about the centre instead would make the
+       * pill step toward and away from the edge every time it changed size. It costs the
+       * bottom dock nothing: a pure translate is the same transform whatever its origin.
        */
       #hit {
+        position: absolute;
         display: flex;
         align-items: flex-end;
         justify-content: center;
         min-width: 64px;
         min-height: 30px;
+        bottom: 24px;
+        left: 50%;
+        transform: translate(-50%, 0);
+        transform-origin: 50% 100%;
+        transition:
+          left 260ms cubic-bezier(0.22, 1, 0.36, 1),
+          bottom 260ms cubic-bezier(0.22, 1, 0.36, 1),
+          transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      /* ---- The side docks ----
+         Main sends the dock over IPC (see setDock in src/main/overlay.ts) and snaps the
+         window to the edge; these turn the pill to face it.
+
+         A left or right edge runs top to bottom, and a wide capsule stuck to one sticks OUT
+         of it — the pill reads as something that fell against the screen edge rather than
+         something that lives there. So a side-docked pill is laid out exactly as it always
+         is and then rotated a quarter turn. Left turns clockwise and right anticlockwise:
+         the pill grows upward in its own frame, and those are the two signs that turn
+         "upward" into "inward, away from the docked edge" rather than off the screen.
+
+         The hint does NOT turn with it — words are horizontal in every dock — which is why
+         it is anchored to the window rather than to this box. See the #tooltip rules.
+
+         The anchor itself needs nothing new: `transform-origin` above is already the pill's
+         bottom edge, so the rotation turns the whole layout a quarter turn about it and the
+         pill's bottom face — the one PAD_BOTTOM holds off the taskbar — becomes the face
+         held PAD_SIDE off the screen edge. `left` therefore reads 16px here in exactly the
+         sense it reads 24px in `bottom` above.
+
+         `bottom: 50%` rather than a fixed offset because a side dock is the taller window
+         (SIDE_HEIGHT) and main clamps it on a short work area: the pill belongs on the
+         window's own middle, which is the line the dock guide draws. */
+      body.dock-left #hit,
+      body.dock-right #hit {
+        bottom: 50%;
+      }
+
+      body.dock-left #hit {
+        left: 16px;
+        transform: translate(-50%, 0) rotate(90deg);
+      }
+
+      body.dock-right #hit {
+        left: calc(100% - 16px);
+        transform: translate(-50%, 0) rotate(-90deg);
+      }
+
+      /* The one state that refuses to turn. An error is a sentence over up to three lines,
+         and a sentence read sideways is not read at all — so the error pill drops the
+         rotation and sits square in the middle of its window, which is why a side-docked
+         window keeps the full WIDTH it does not otherwise need. hitRect() in
+         src/main/overlay.ts has the matching special case. */
+      body.dock-left #hit:has(#pill.error),
+      body.dock-right #hit:has(#pill.error) {
+        left: 50%;
+        transform: translate(-50%, 50%);
       }
 
       /* ---- At rest ----
@@ -131,9 +206,14 @@
         width: 46px;
         height: 10px;
         border-radius: 999px;
-        /* The hover hint is revealed by the pill widening over it rather than by fading in:
-           a `display` swap can't be transitioned, and laying the text out inside a 46px pill
-           just to hold it at opacity 0 shoves everything off centre. */
+        /* The pill is clickable (main switches mouse events on while the cursor is on it —
+           see setHovered in src/main/overlay.ts), and the cursor is the only affordance
+           there is room for. */
+        cursor: pointer;
+        /* The states morph by size; clipping keeps the contents (the logo, a partial
+           transcript) inside a capsule that is still mid-growth rather than poking out of
+           it. The hover tooltip lives OUTSIDE the pill for exactly this reason — see the
+           #tooltip rules below. */
         overflow: hidden;
         background: rgba(58, 1, 22, 0.5);
         border: 1px solid rgba(255, 238, 224, 0.4);
@@ -174,40 +254,161 @@
       /* ---- Hover ----
          The resting mark is deliberately anonymous, which leaves nowhere to find out what
          it wants from you. Pointing at it is the one moment a user has actually asked, so
-         that is where the hotkey gets named — and only there, because a permanent caption
-         would be a permanent distraction.
+         hover is where everything gets named — the Wispr Flow pattern, not the inline
+         caption this used to be: the sliver becomes a small capsule wearing the mark, and a
+         tooltip pill floats above it naming the hotkey. Only at rest: during a dictation the
+         pill is already saying something more useful, and moving the cursor over it must not
+         change what it says.
 
-         Hover only applies to the resting pill: during a dictation the pill is already
-         expanded and saying something more useful, and moving the cursor over it must not
-         change what it says. */
+         There used to be a second circle beside the pill — a cursor glyph whose own hover
+         swapped the tooltip for a longer how-to naming the click and the drag. Two floating
+         objects for one resting mark is one too many, and the arrow read as a stray cursor
+         stuck to the screen, so it went; the how-to briefly survived as a second line here
+         and went the same way, because the hotkey is the one thing worth saying to somebody
+         who has only pointed at a 46px bar. The click and the drag are discovered by trying
+         them, and the app window's Yordam pane is where they are written down. Don't add
+         either back.
+
+         The tooltip is absolutely positioned above the pill rather than laid out beside it,
+         so summoning it never shifts the pill itself — a mark that hops sideways when
+         pointed at reads as flinching. */
       #pill.hover:not(.active):not(.error):not(.done) {
-        justify-content: flex-start;
-        gap: 9px;
-        width: 216px;
-        height: 32px;
-        padding: 0 13px;
+        width: 64px;
+        height: 30px;
         opacity: 1;
         background: rgba(58, 1, 22, 0.96);
         border-color: rgba(255, 238, 224, 0.14);
       }
 
-      #hint {
+      /* The tooltip pill: the hotkey, and nothing else.
+         ---- Why it is a child of the body and not of #hit ----
+
+         Because it is the one thing that must NOT turn with the pill. A side-docked #hit is
+         rotated a quarter turn, and anything inside it inherits that — which made the hint
+         read bottom-to-top up the screen edge, i.e. not read at all. A tooltip is words, and
+         words are horizontal in every dock.
+
+         Counter-rotating it inside #hit was the obvious fix and is the wrong one: its
+         `left`/`bottom` would still resolve in the rotated frame, so the gap between pill
+         and tooltip would be measured along the wrong axis and the offset that centres it
+         would depend on the text's own width. Positioned against the window instead, each
+         dock is three plain properties, and the anchoring is the same shape as the pill's
+         own: near the docked edge, centred on the other axis.
+
+         It cannot be `position: fixed` for the same reason it cannot stay inside #hit — a
+         transformed ancestor becomes the containing block even for fixed children. Out of
+         #hit is out of #hit. */
+      #tooltip {
+        position: absolute;
         display: none;
-        flex-shrink: 0;
-        white-space: nowrap;
+        bottom: 64px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 7px 12px;
+        border-radius: 12px;
+        background: rgba(58, 1, 22, 0.96);
+        border: 1px solid rgba(255, 238, 224, 0.14);
+        box-shadow: 0 8px 32px rgba(89, 2, 34, 0.28);
         font-size: 12px;
-        font-weight: 400;
         letter-spacing: 0.1px;
-        color: rgba(255, 238, 224, 0.6);
+        color: rgba(255, 238, 224, 0.7);
+        white-space: nowrap;
+        animation: tip-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
       }
 
-      #hint b {
+      #tooltip b {
         font-weight: 600;
         color: var(--cream);
       }
 
-      #pill.hover:not(.active):not(.error):not(.done) #hint {
+
+      /* `:has()` rather than the sibling combinator this used to be — the tooltip is no
+         longer next to the pill in the DOM, and the condition is still exactly "the pill is
+         wearing its hover capsule". */
+      body:has(#pill.hover:not(.active):not(.error):not(.done)) #tooltip {
         display: block;
+      }
+
+      @keyframes tip-in {
+        from {
+          opacity: 0;
+          transform: translateX(-50%) translateY(4px);
+        }
+      }
+
+      /* Beside the pill at a side dock, and level with it: PAD_SIDE (16) + the hover
+         capsule's 30px thickness + a 12px gap clears the pill exactly, and the window's
+         vertical middle is the line the pill itself sits on. Still horizontal, because the
+         window is what these resolve against now — see the note on #tooltip above.
+
+         `left`/`right` do not interpolate into each other, which costs nothing here: the
+         tooltip is hidden for the whole of a drag, so it never animates between docks. */
+      body.dock-left #tooltip,
+      body.dock-right #tooltip {
+        bottom: auto;
+        top: 50%;
+      }
+
+      body.dock-left #tooltip {
+        left: 58px;
+        transform: translateY(-50%);
+        animation-name: tip-in-left;
+      }
+
+      body.dock-right #tooltip {
+        left: auto;
+        right: 58px;
+        transform: translateY(-50%);
+        animation-name: tip-in-right;
+      }
+
+      /* The entrance slides out of the pill rather than up off it, which is the same gesture
+         seen through the same quarter turn. Each needs its own keyframes because the resting
+         transform differs — inheriting the centred one would teleport the tooltip for a
+         frame before settling. */
+      @keyframes tip-in-left {
+        from {
+          opacity: 0;
+          transform: translateY(-50%) translateX(-4px);
+        }
+      }
+
+      @keyframes tip-in-right {
+        from {
+          opacity: 0;
+          transform: translateY(-50%) translateX(4px);
+        }
+      }
+
+      /* Mid-drag the pill is a thing being carried, not a menu: the caption gets out of the
+         way until it lands. The class comes from overlay.ts, which is also what tells main
+         to move the window. */
+      body.dragging #tooltip {
+        display: none !important;
+      }
+
+      /* Picked up, and it should feel picked up. The lift is the whole fix for "it feels
+         heavy": the window is being moved under the cursor every frame, and a pill that is
+         also still running its own size transitions reads as lagging behind its own shadow.
+         So geometry is pinned for the duration and only the lift animates. */
+      body.dragging #pill {
+        cursor: grabbing;
+        transform: scale(1.07);
+        box-shadow: 0 14px 38px rgba(89, 2, 34, 0.5);
+        transition:
+          transform 140ms cubic-bezier(0.22, 1, 0.36, 1),
+          box-shadow 140ms ease;
+      }
+
+      /* Pinned to the hover capsule while carried — but only when the pill is at rest.
+         Dragging a recording pill has to leave the recording pill alone, which is what the
+         :not() chain buys (and what the specificity of the .hover rule above demands). */
+      body.dragging #pill:not(.active):not(.error):not(.done) {
+        width: 64px;
+        height: 30px;
+        opacity: 1;
+        background: rgba(58, 1, 22, 0.96);
+        border-color: rgba(255, 238, 224, 0.14);
       }
 
       /* ---- Speaking, and thinking ----
@@ -322,7 +523,7 @@
         display: flex;
         align-items: center;
         gap: 2px;
-        height: 20px;
+        height: 24px;
         flex-shrink: 0;
       }
 
@@ -424,10 +625,14 @@
              capsule would be a hole. Masking keeps the mark's exact shape and lets the
              colour follow the state — cream normally, red when a dictation failed. -->
         <span id="logo" aria-hidden="true"></span>
-        <div id="hint">Gapiring <b>Ctrl + Caps&nbsp;Lock</b></div>
         <!-- Order matters: dots, then the partial transcript if there is one, then the
              spinner — so the spinner stays at the right-hand end in every variant. -->
-        <div id="bars"></div>
+        <!-- Hidden until a dictation says otherwise. The meter belongs to RECORDING alone,
+             and overlay.ts hides it in every other state — but the very first frame is drawn
+             before any status has arrived, and a row of eleven dots clipped inside the
+             resting hairline (or crowding the mark on hover) is what that frame looked
+             like. The resting pill has no meter, so neither does the markup. -->
+        <div id="bars" class="hidden"></div>
         <div id="label"></div>
         <svg id="spinner" class="hidden" viewBox="0 0 16 16" aria-hidden="true"></svg>
         <svg id="check" class="hidden" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -441,6 +646,9 @@
         </svg>
       </div>
     </div>
+    <!-- Outside #hit, not inside it: #hit is rotated at a side dock and the hint has to stay
+         horizontal, so it is anchored to the window instead. See the #tooltip rules. -->
+    <div id="tooltip">Gapiring <b>Ctrl + Shift</b></div>
     <script type="module" src="./overlay.ts"></script>
   </body>
 </html>

@@ -1,7 +1,8 @@
 # gapir me
 
-Push-to-talk dictation for Uzbek. Hold **Ctrl+CapsLock**, speak, release — the text lands
-wherever your cursor is, in any app.
+Push-to-talk dictation for Uzbek. Hold **Ctrl+Shift**, speak, release — the text lands
+wherever your cursor is, in any app. Or click the pill at the bottom of the screen to
+dictate hands-free: click to start, click again (or Esc) to stop.
 
 Like Wispr Flow, but Uzbek. The open-source dictation tools all run Whisper locally, which
 is precisely why none of them work in Uzbek. This one sends the audio to **Google Gemini**,
@@ -17,9 +18,9 @@ and is paid with Uzcard or Humo through Payme.
 ## How it works
 
 ```
-Ctrl+Caps down ──▶ ffmpeg captures 16 kHz mono PCM ──▶ buffered
-                                                          │
-Ctrl+Caps up ──────▶ the clip goes to our server ─────────┘
+Ctrl+Shift down ──▶ ffmpeg captures 16 kHz mono PCM ──▶ buffered
+                                                           │
+Ctrl+Shift up ──────▶ the clip goes to our server ─────────┘
                           │  checks your plan and today's quota,
                           │  then calls Gemini with a key you never see
                           ▼
@@ -35,9 +36,10 @@ a small black capsule of live bars. Let go and the capsule widens a little, thos
 flatten into a row of dots and a spinner steps round beside them. Then it collapses back to
 the hairline — with a tick on the way past, if the paste landed.
 
-Point at the resting bar and it widens to name the hotkey; it is click-through and
-unfocusable by design, so that hover is the only thing you can do to it — see
-[overlay.ts](src/main/overlay.ts). Turn the resting bar off in Settings if it gets in the
+Point at the resting bar and it widens to name both ways in — click it, or hold the
+hotkey. The window is unfocusable by design and click-through everywhere except the pill
+itself, so clicking it can never move your caret — see [overlay.ts](src/main/overlay.ts).
+Turn the resting bar off in Settings if it gets in the
 way of a fullscreen game.
 
 ## The app window
@@ -182,7 +184,7 @@ MB and is the obvious next optimisation.
 | Path | Role |
 | --- | --- |
 | [src/main/state.ts](src/main/state.ts) | The dictation state machine — the only module that coordinates the others |
-| [src/main/hotkey.ts](src/main/hotkey.ts) | Ctrl+CapsLock hold/release via a low-level keyboard hook |
+| [src/main/hotkey.ts](src/main/hotkey.ts) | Ctrl+Shift hold/release via a low-level keyboard hook |
 | [src/main/audio.ts](src/main/audio.ts) | ffmpeg capture, device enumeration, RMS, WAV wrapping |
 | [src/main/stt/](src/main/stt/) | The proxy adapter, the direct Gemini batch and Live adapters, the prompt, the mock |
 | [src/main/auth.ts](src/main/auth.ts) | Google sign-in and the encrypted Supabase session |
@@ -205,26 +207,45 @@ usage pattern, and would break the hotkey after the first dictation. The subproc
 happens to emit precisely the 16 kHz mono s16le that Gemini takes, so audio pipes through
 with no conversion.
 
-**The hotkey module sends keystrokes as well as reading them.** `uiohook-napi` observes
-input but cannot suppress it, and CapsLock toggles on key *down* — so the OS flips caps
-state the moment a dictation starts, and nothing can prevent it. Left alone, every
-dictation would leave you typing in CAPS. So [hotkey.ts](src/main/hotkey.ts) taps CapsLock
-once when the gesture ends, cancelling out the user's own toggle.
-
-That injected tap is visible to our own hook, because injected input travels the same
-low-level chain as real input. Without the `restoringCaps` guard it would look like a
-fresh trigger press and — with Ctrl still held — immediately start another recording.
-Set `RESTORE_CAPS_LOCK` to false to drop the correction and live with the flipped state.
+**A third key cancels the gesture.** Ctrl+Shift is the prefix of half the shortcuts in
+Windows — Ctrl+Shift+V, Ctrl+Shift+T, Ctrl+Shift+Esc — and holding the combo on the way to
+the third key looks exactly like the start of a dictation. So [hotkey.ts](src/main/hotkey.ts)
+cancels the moment any other key goes down mid-gesture: the user is typing a shortcut, not
+speaking, and the sub-`minRecordingMs` guard discards the false start's half-second of audio.
+(The trigger used to be Ctrl+CapsLock, which needed a whole synthetic-keystroke mechanism to
+un-toggle the caps state each press caused; Shift toggles nothing, so all of that is gone.)
 
 **The hotkey doesn't use Electron's `globalShortcut`.** That API requires a non-modifier
 key and only fires on press, never release, so a modifier-only hold gesture is impossible
 with it.
 
-**The overlay uses `showInactive()` and `focusable: false`, and its window never resizes.**
-Calling `show()` would activate the window, move the caret out of the app being dictated
-into, and paste the text into the wrong place. The window is a fixed 360×80 and the pill
+**The overlay uses `showInactive()` and `focusable: false`, and its window never resizes to
+show a bigger pill.** Calling `show()` would activate the window, move the caret out of the
+app being dictated into, and paste the text into the wrong place. The window is 360×150 at
+the bottom dock (tall enough for the hover tooltip that floats above the pill) and the pill
 inside it grows in CSS, because resizing a transparent always-on-top window on Windows
-flickers and lags a frame behind.
+flickers and lags a frame behind. The one programmatic move it does make is dragging: hold
+the pill and main walks the window after the cursor, snapping it to the left edge, bottom
+centre or right edge on release (persisted as `overlayDock`, along with the height it was
+dropped at as `overlayDockY` — a side dock is a whole edge, so the pill stays at the level
+you left it). While it is held, a second
+full-screen click-through window draws the three slots it can land in, and a magnet leans
+the pill toward whichever it is nearing — by at most `MAX_ASSIST_PX`, so the pill never
+leaves the cursor carrying it; the drop is what puts it in the slot.
+
+**A side-docked pill is rotated a quarter turn, and its window is 360 wide by 360 tall
+instead.** A left or right edge runs top to bottom, so a wide capsule stuck to one reads as
+having fallen against the screen rather than as living there. Rotating it takes the hover
+tooltip with it — which is why the side window is taller: the tooltip's 150px of text now
+needs 150px of *height*. The width stays 360 for the one state that refuses to turn, the
+error pill, because a three-line sentence read sideways is not read at all.
+
+**That drag moves the window with `setBounds`, restating the size, never with
+`setPosition`.** On a fractionally scaled display — 125% is the Windows default on most
+laptops — `setPosition` grows the window about a pixel per call, because Electron rounds
+the DIP→physical conversion and then re-derives the size from the rounded rect. At a
+hundred-odd calls a second the window outgrows the screen in seconds, and since the pill
+hangs from the window's bottom edge it slides out of the user's hand on the way.
 
 **The overlay reacts to hover without ever receiving a mouse event, and main polls the
 cursor to do it.** The obvious implementation is `setIgnoreMouseEvents(true, { forward:
@@ -296,14 +317,14 @@ Deliberately absent, in rough priority order:
 - **macOS.** Windows-only for now, and the blocker is practical: a Mac build can't be
   produced on Windows, and the Accessibility / Input Monitoring / Microphone prompts can't
   be verified by CI. Four files need platform branches when the time comes —
-  `audio.ts` (dshow → avfoundation), `hotkey.ts` (Ctrl+CapsLock → hold Right ⌘, which also
-  sidesteps the entire CapsLock-restore mechanism), `inject.ts` (Ctrl+V → ⌘V), and
+  `audio.ts` (dshow → avfoundation), `hotkey.ts` (Ctrl+Shift → hold Right ⌘, or keep the
+  combo), `inject.ts` (Ctrl+V → ⌘V), and
   `overlay.ts` (`toolbar` → `panel`, plus `app.dock.hide()`). Shipping it to anyone else
   also needs an Apple Developer account for signing and notarization.
 - **Code signing** — see Installing above.
 - **Latin/Cyrillic toggle** — Uzbek is split across both scripts, and the prompt currently
   pins output to Latin.
-- **Configurable hotkey** — currently hardcoded to Ctrl+CapsLock, changeable only by
+- **Configurable hotkey** — currently hardcoded to Ctrl+Shift, changeable only by
   editing `TRIGGER` in [src/main/hotkey.ts](src/main/hotkey.ts).
 - **Per-app style** — Wispr changes register between a chat window and a document; here the
   Uslub pane is global.

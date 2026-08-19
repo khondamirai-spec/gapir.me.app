@@ -14,6 +14,31 @@ export type Language = 'uz' | 'ru' | 'en';
  */
 export type AppState = 'IDLE' | 'RECORDING' | 'TRANSCRIBING' | 'INJECTING' | 'DONE' | 'ERROR';
 
+/**
+ * Where the pill lives on screen: docked to the left edge, the bottom centre (the default),
+ * or the right edge. There are exactly three docks rather than a free position — the pill
+ * snaps to whichever the user drops it nearest, so it can never be lost half-off a screen
+ * or stranded on a display that was unplugged.
+ */
+export type OverlayDock = 'left' | 'center' | 'right';
+
+/**
+ * What the dock guides draw while the pill is being carried: the three slots it can land
+ * in, with `active` being the one the magnet is currently pulling it toward (null while it
+ * is out in the open). `shown: false` is the exit — the guides fade before their window is
+ * hidden, so a released pill does not leave three outlines blinking out behind it.
+ */
+export interface DockGuides {
+  shown: boolean;
+  active: OverlayDock | null;
+  /**
+   * Where down the work area the two side slots are drawn, in pixels from its top — the
+   * level the pill is being carried at, because that is where a side drop now lands it.
+   * The bottom slot ignores it; it has one place to be.
+   */
+  y: number;
+}
+
 export interface OverlayStatus {
   state: AppState;
   /** 0..1 RMS level, only meaningful while RECORDING. */
@@ -85,6 +110,22 @@ export interface Settings {
   showIdlePill: boolean;
   /** Append every successful transcript to the history log. */
   saveHistory: boolean;
+  /**
+   * Where the pill is docked. Set by dragging the pill itself, never by a Settings
+   * control — a position is something you put somewhere, not something you name in a form.
+   */
+  overlayDock: OverlayDock;
+  /**
+   * How far down a side dock the pill sits, as a fraction of the work area's height — 0 is
+   * the top edge, 1 the bottom, 0.5 the middle it used to be pinned to.
+   *
+   * A fraction rather than a pixel offset because a screen is not the size it was: a
+   * resolution change, an external monitor, a taskbar that moved to the side all change the
+   * work area, and 0.3 of it is still recognisably "a bit above the middle" where 320px may
+   * be off the bottom of a laptop panel. Ignored by the bottom dock, which has only one
+   * place to be, but kept across a visit to it so a round trip doesn't lose the level.
+   */
+  overlayDockY: number;
   /** Shown in the greeting. Purely cosmetic, and blank is a perfectly good value. */
   userName: string;
   style: StyleSettings;
@@ -179,6 +220,8 @@ export const DEFAULT_SETTINGS: Settings = {
   launchAtLogin: false,
   showIdlePill: true,
   saveHistory: true,
+  overlayDock: 'center',
+  overlayDockY: 0.5,
   userName: '',
   style: DEFAULT_STYLE,
   scratchpad: '',
@@ -216,6 +259,25 @@ export const IPC = {
    * told the answer. See src/main/overlay.ts.
    */
   overlayHover: 'overlay:hover',
+  /**
+   * overlay renderer -> main: the pill was clicked. Toggles a hands-free dictation — start
+   * when resting, stop-and-transcribe when recording — so the hotkey never has to be held.
+   */
+  overlayToggle: 'overlay:toggle',
+  /**
+   * overlay renderer -> main: a drag of the pill began / ended. The renderer only reports
+   * the button going down and up — main moves the window itself by polling the cursor,
+   * because the renderer's screen coordinates and Electron's DIP coordinates disagree on
+   * scaled displays. See beginDrag/endDrag in src/main/overlay.ts.
+   */
+  overlayDragStart: 'overlay:drag-start',
+  overlayDragEnd: 'overlay:drag-end',
+  /** main -> overlay renderer: which dock the pill sits in, so CSS can align the content.
+   *  Also sent mid-drag with the dock the magnet is pulling toward, so the pill settles
+   *  into the slot as it is carried rather than jumping into it on release. */
+  overlayDock: 'overlay:dock',
+  /** main -> dock-guides renderer: the three landing slots and which one is engaged. */
+  dockGuides: 'dock:guides',
   /** app renderer -> main */
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',

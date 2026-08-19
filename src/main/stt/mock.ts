@@ -19,8 +19,7 @@ const SENTENCE = [
   'matni.',
   'Ctrl',
   'va',
-  'Caps',
-  'Lock',
+  'Shift',
   'ishlayapti.'
 ];
 

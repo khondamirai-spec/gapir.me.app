@@ -4,6 +4,7 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_SETTINGS,
   DEFAULT_STYLE,
+  type OverlayDock,
   type Settings,
   type StyleSettings
 } from '@shared/types';
@@ -26,6 +27,7 @@ interface StoreShape {
   launchAtLogin: boolean;
   showIdlePill: boolean;
   saveHistory: boolean;
+  overlayDock: OverlayDock;
   userName: string;
   style: StyleSettings;
   scratchpad: string;
@@ -79,6 +81,19 @@ function readStyle(): StyleSettings {
   };
 }
 
+/** A fraction, clamped — a corrupt or hand-edited value must not park the pill off screen. */
+function readDockY(): number {
+  const raw = store.get('overlayDockY') as unknown;
+  return typeof raw === 'number' && Number.isFinite(raw)
+    ? Math.min(1, Math.max(0, raw))
+    : DEFAULT_SETTINGS.overlayDockY;
+}
+
+function readDock(): OverlayDock {
+  const raw = store.get('overlayDock') as unknown;
+  return raw === 'left' || raw === 'right' || raw === 'center' ? raw : DEFAULT_SETTINGS.overlayDock;
+}
+
 export function getSettings(): Settings {
   return {
     language: store.get('language'),
@@ -87,6 +102,8 @@ export function getSettings(): Settings {
     launchAtLogin: store.get('launchAtLogin'),
     showIdlePill: store.get('showIdlePill'),
     saveHistory: store.get('saveHistory'),
+    overlayDock: readDock(),
+    overlayDockY: readDockY(),
     userName: store.get('userName'),
     style: readStyle(),
     scratchpad: store.get('scratchpad'),
@@ -101,6 +118,9 @@ export function setSettings(patch: Partial<Settings>): void {
     store.set('minRecordingMs', Math.min(5_000, Math.max(0, Math.round(patch.minRecordingMs) || 0)));
   if (patch.showIdlePill !== undefined) store.set('showIdlePill', patch.showIdlePill);
   if (patch.saveHistory !== undefined) store.set('saveHistory', patch.saveHistory);
+  if (patch.overlayDock !== undefined) store.set('overlayDock', patch.overlayDock);
+  if (patch.overlayDockY !== undefined)
+    store.set('overlayDockY', Math.min(1, Math.max(0, patch.overlayDockY)));
   if (patch.userName !== undefined) store.set('userName', patch.userName.trim().slice(0, 40));
   if (patch.style !== undefined) store.set('style', { ...readStyle(), ...patch.style });
   if (patch.scratchpad !== undefined) store.set('scratchpad', patch.scratchpad.slice(0, 200_000));

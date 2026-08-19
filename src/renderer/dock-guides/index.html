@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>gapir me — docks</title>
+    <style>
+      /* =========================================================================
+         The dock guides.
+
+         Three slots the pill can be dropped into, drawn only while it is being
+         carried. Without them a drag is a guess: the pill snaps somewhere on
+         release and the user finds out afterwards where "somewhere" was. With
+         them the snap is a promise made in advance — this is where it will land,
+         and the magnet in src/main/overlay.ts is already pulling it there.
+
+         This window covers the whole work area and is click-through from the
+         moment it is created, so every measurement below is in work-area
+         coordinates and matches what dockBounds() does to the pill's own window:
+
+           left / right : PAD_SIDE in from the edge, centred on the vertical
+                          middle, and stood on end — a side-docked pill is
+                          rotated to run along the edge
+           center       : PAD_BOTTOM up from the bottom edge, horizontally centred
+
+         The slot is the size of the resting/hover capsule (64×30), which is what
+         the pill actually is at the moment anyone drags it. Change any of these
+         and change the constants in src/main/overlay.ts, which are the same
+         numbers seen from the other side.
+         ========================================================================= */
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        user-select: none;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+
+      /* The whole set fades as one. Hidden by default so the first frame after the window
+         is created is empty rather than a flash of three slots at full strength. */
+      #guides {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        transition: opacity 140ms ease;
+      }
+
+      body.shown #guides {
+        opacity: 1;
+      }
+
+      /*
+       * A slot: the pill's silhouette, empty. Dashed rather than solid, and cream at low
+       * alpha rather than a colour of its own — it has to read as "the pill goes here" on
+       * top of whatever document the user has open, without competing with the pill itself.
+       */
+      .slot {
+        position: absolute;
+        width: 64px;
+        height: 30px;
+        border: 1.5px dashed rgba(255, 238, 224, 0.34);
+        border-radius: 999px;
+        background: rgba(58, 1, 22, 0.22);
+        transform: scale(0.94);
+        transition:
+          transform 180ms cubic-bezier(0.34, 1.4, 0.64, 1),
+          background-color 160ms ease,
+          border-color 160ms ease,
+          box-shadow 160ms ease;
+      }
+
+      /* Engaged: the magnet has this one. Solid border and a glow, so "it will land here"
+         is legible from the corner of an eye that is busy watching the pill. */
+      .slot.active {
+        border-style: solid;
+        border-color: rgba(255, 238, 224, 0.75);
+        background: rgba(58, 1, 22, 0.5);
+        box-shadow:
+          0 0 0 6px rgba(255, 238, 224, 0.07),
+          0 8px 32px rgba(89, 2, 34, 0.35);
+        transform: scale(1.06);
+      }
+
+      /* PAD_SIDE (16) from the edge — exactly where the rotated pill's PAD_SIDE-held face
+         puts it — and at whatever height the pill is currently being carried at, which is
+         where a side drop leaves it. `--slot-y` comes from main on every tick of the drag;
+         the −32px is half the slot, so the level names its centre rather than its top.
+
+         Stood on end, because so is the pill: a side-docked pill is rotated a quarter turn
+         to run along the edge, so its silhouette is the hover capsule's 64×30 with the two
+         swapped. A horizontal slot here would promise a landing the drop does not make. */
+      #slot-left,
+      #slot-right {
+        width: 30px;
+        height: 64px;
+        top: var(--slot-y, 50%);
+        margin-top: -32px;
+      }
+
+      #slot-left {
+        left: 16px;
+      }
+
+      #slot-right {
+        right: 16px;
+      }
+
+      /* PAD_BOTTOM (24) up from the bottom: the bottom dock's window sits flush with the
+         work area and the pill floats that padding above its lower edge. */
+      #slot-center {
+        left: 50%;
+        margin-left: -32px;
+        bottom: 24px;
+      }
+
+      /* An edge rail behind the side slots. The slot alone is a small object floating near
+         a big edge; the rail is what makes the edge itself look like a place. */
+      .rail {
+        position: absolute;
+        top: 12%;
+        height: 76%;
+        width: 3px;
+        border-radius: 999px;
+        background: linear-gradient(
+          to bottom,
+          rgba(255, 238, 224, 0),
+          rgba(255, 238, 224, 0.22),
+          rgba(255, 238, 224, 0)
+        );
+        opacity: 0;
+        transition: opacity 160ms ease;
+      }
+
+      #rail-left {
+        left: 0;
+      }
+
+      #rail-right {
+        right: 0;
+      }
+
+      #slot-left.active ~ #rail-left,
+      #slot-right.active ~ #rail-right {
+        opacity: 1;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #guides,
+        .slot,
+        .rail {
+          transition-duration: 1ms !important;
+        }
+        .slot {
+          transform: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="guides">
+      <!-- DOM order is load-bearing: the rails are reached with `#slot-left.active ~ #rail-left`,
+           so both rails must come after both slots. -->
+      <div class="slot" id="slot-left"></div>
+      <div class="slot" id="slot-right"></div>
+      <div class="slot" id="slot-center"></div>
+      <div class="rail" id="rail-left"></div>
+      <div class="rail" id="rail-right"></div>
+    </div>
+    <script type="module" src="./dock-guides.ts"></script>
+  </body>
+</html>

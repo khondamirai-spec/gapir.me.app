@@ -11,7 +11,7 @@ import {
   dialog
 } from 'electron';
 import { IPC, type AppSection, type Settings } from '@shared/types';
-import { createOverlay, destroyOverlay, setIdleVisible } from './overlay';
+import { beginDrag, createOverlay, destroyOverlay, endDrag, setDock, setIdleVisible } from './overlay';
 import { dictation } from './state';
 import { getSettings, setSettings } from './config';
 import { refreshDevices } from './audio';
@@ -172,7 +172,7 @@ function toAppWindow(channel: string, payload?: unknown): void {
 function buildTray(): void {
   const image = nativeImage.createFromPath(iconPath('tray.png'));
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-  tray.setToolTip('gapir me — Ctrl+Caps Lock bosib gapiring');
+  tray.setToolTip('gapir me — Ctrl+Shift bosib gapiring');
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -204,6 +204,19 @@ function buildTray(): void {
 }
 
 function registerIpc(): void {
+  // A click on the pill toggles a hands-free dictation; the state machine decides what the
+  // click means, the pill only reports it.
+  ipcMain.handle(IPC.overlayToggle, () => dictation.toggle());
+
+  // Dragging the pill to a new dock. The renderer reports only the button going down and
+  // up; the window is moved and snapped in overlay.ts, and the chosen dock is persisted
+  // here so the pill comes back where it was left.
+  ipcMain.handle(IPC.overlayDragStart, () => beginDrag());
+  ipcMain.handle(IPC.overlayDragEnd, () => {
+    const dropped = endDrag();
+    if (dropped) setSettings({ overlayDock: dropped.dock, overlayDockY: dropped.y });
+  });
+
   // Nothing is filtered on the way out any more: the settings hold no credential, because
   // the key the app dictates on is the app's rather than the user's. See src/main/config.ts.
   ipcMain.handle(IPC.settingsGet, (): Settings => getSettings());
@@ -324,6 +337,7 @@ function bootstrap(): void {
   registerIpc();
   createOverlay();
   setIdleVisible(getSettings().showIdlePill);
+  setDock(getSettings().overlayDock, { y: getSettings().overlayDockY });
   buildTray();
 
   // Keep an open window in step with dictations happening in other apps.

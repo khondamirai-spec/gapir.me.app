@@ -99,6 +99,20 @@ class Dictation {
     hotkey.start();
   }
 
+  /**
+   * A click on the overlay pill: hands-free dictation, without the hotkey.
+   *
+   * The same two transitions the hotkey drives, chosen from the current state instead of
+   * from key edges — resting starts a recording, recording stops it and transcribes. A
+   * click-started recording has no keyup to end it, so it runs until the next click (or
+   * Esc); nothing else in the flow knows the difference, because there isn't one.
+   */
+  toggle(): void {
+    if (this.state === 'RECORDING') void this.onStop();
+    else if (this.state === 'IDLE' || this.state === 'DONE' || this.state === 'ERROR')
+      void this.onStart();
+  }
+
   private set(state: AppState, message = ''): void {
     this.state = state;
     updateOverlay({ state, level: this.level, partial: this.partial, message });

@@ -368,7 +368,7 @@ function renderHistory(): void {
     } else {
       empty.innerHTML =
         '<span class="big">Hali hech narsa aytilmagan</span>' +
-        'Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Caps Lock</kbd> ni bosib turib gapiring.<br />' +
+        'Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Shift</kbd> ni bosib turib gapiring.<br />' +
         'Aytganingiz shu yerda paydo bo‘ladi.';
     }
     entriesEl.appendChild(empty);

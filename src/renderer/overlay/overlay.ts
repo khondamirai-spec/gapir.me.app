@@ -16,8 +16,8 @@ import type { AppState, OverlayStatus } from '../../shared/types';
 const BAR_COUNT = 11;
 /** The height a bar rests at — a dot, not a bar of zero, which would vanish entirely. */
 const DOT_HEIGHT = 3;
-/** Ceiling for a bar, a little over half the 32px capsule; see the CSS notes. */
-const MAX_BAR_HEIGHT = 18;
+/** Ceiling for a bar — most of the 32px capsule, so a loud syllable visibly fills it. */
+const MAX_BAR_HEIGHT = 24;
 /** Spokes in the spinner. Twelve is the classic step count and what the reference uses. */
 const SPOKE_COUNT = 12;
 
@@ -105,9 +105,11 @@ function renderBars(level: number): void {
     const weight = 1 - Math.abs(i - (BAR_COUNT - 1) / 2) / BAR_COUNT;
     // A per-bar wobble, scaled by how loud it is: without it the whole row rises and falls
     // as one rigid hump, which reads as a meter. Speech makes neighbouring bars disagree.
-    const wobble = Math.sin(now / 90 + i * 1.7) * 1.6 * Math.sqrt(value);
-    // sqrt gives quiet speech visible movement; RMS alone barely leaves the floor.
-    const height = DOT_HEIGHT + Math.sqrt(value) * 20 * weight + wobble;
+    const wobble = Math.sin(now / 90 + i * 1.7) * 2.2 * Math.sqrt(value);
+    // sqrt gives quiet speech visible movement; RMS alone barely leaves the floor. The ×30
+    // gain is tuned so ordinary speaking volume swings the bars through most of their
+    // range — at ×20 the meter read as a murmur next to Wispr Flow's.
+    const height = DOT_HEIGHT + Math.sqrt(value) * 30 * weight + wobble;
     bar.style.height = `${Math.max(DOT_HEIGHT, Math.min(MAX_BAR_HEIGHT, height))}px`;
   });
 }
@@ -182,3 +184,70 @@ window.api.onStatus(render);
 // and Chromium is never handed the cursor at all, so main hit-tests it and sends the answer.
 // See the hover notes in src/main/overlay.ts.
 window.api.onOverlayHover(setHovered);
+
+// Which dock the pill sits in. Main owns the window's position; the class only aligns the
+// content toward the docked edge (and anchors the tooltip so it can't hang off the screen).
+window.api.onOverlayDock((dock) => {
+  document.body.classList.toggle('dock-left', dock === 'left');
+  document.body.classList.toggle('dock-right', dock === 'right');
+});
+
+/**
+ * Click vs drag, on the same pill.
+ *
+ * A press starts as both: main is told immediately (overlayDragStart) and begins watching
+ * the cursor, but only calls it a drag once it travels a few pixels — and this side keeps
+ * its own copy of that same threshold, because the click event fires here regardless of how
+ * far the mouse moved and a drop must not also toggle a dictation.
+ *
+ * Pointer capture matters: main moves the window under the cursor, and at a screen edge the
+ * clamped window stops following, so the pointer can leave it mid-drag. A captured pointer
+ * still delivers its pointerup here; an uncaptured one would strand main in the drag loop.
+ */
+let didDrag = false;
+let downX = 0;
+let downY = 0;
+
+pill.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  didDrag = false;
+  downX = e.screenX;
+  downY = e.screenY;
+  pill.setPointerCapture(e.pointerId);
+  void window.api.overlayDragStart();
+});
+
+pill.addEventListener('pointermove', (e) => {
+  if (!pill.hasPointerCapture(e.pointerId) || didDrag) return;
+  if (Math.abs(e.screenX - downX) >= 5 || Math.abs(e.screenY - downY) >= 5) {
+    didDrag = true;
+    document.body.classList.add('dragging');
+  }
+});
+
+pill.addEventListener('pointerup', (e) => {
+  if (!pill.hasPointerCapture(e.pointerId)) return;
+  pill.releasePointerCapture(e.pointerId);
+  document.body.classList.remove('dragging');
+  void window.api.overlayDragEnd();
+});
+
+// If capture is torn away by anything other than our own release, main must still be told
+// the drag is over — its cursor-chasing loop has no other way to stop. endDrag is
+// idempotent, so the pointerup path above reaching here a second time costs nothing.
+pill.addEventListener('lostpointercapture', () => {
+  document.body.classList.remove('dragging');
+  void window.api.overlayDragEnd();
+});
+
+// A click, though, is a real mouse event: while the cursor is on the pill, main switches
+// mouse events back on (see setHovered in src/main/overlay.ts) precisely so this can fire.
+// The pill holds no dictation logic — main decides whether the click starts or stops.
+pill.addEventListener('click', () => {
+  // The tail end of a drag — the pill was moved, not asked for anything.
+  if (didDrag) {
+    didDrag = false;
+    return;
+  }
+  void window.api.toggleDictation();
+});

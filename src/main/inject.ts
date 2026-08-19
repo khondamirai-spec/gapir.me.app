@@ -68,8 +68,10 @@ export async function injectText(text: string): Promise<void> {
   clipboard.writeText(text);
 
   // The user has just let go of the hotkey, but the OS may not have processed both keyups
-  // yet. Synthesising Ctrl+V while it still believes CapsLock is held would send the target
-  // app a different chord than we intend — so let the physical keys settle.
+  // yet. Synthesising Ctrl+V while it still believes Shift is held would send the target
+  // app Ctrl+Shift+V — a different command in most editors — so let the physical keys
+  // settle. (Click-started dictations have no keys down at all, and paste arrives a full
+  // transcription round-trip after the release anyway; this guards the mock's instant path.)
   await sleep(SETTLE_DELAY_MS);
 
   try {

@@ -1,7 +1,9 @@
 import { join } from 'node:path';
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { app, safeStorage, shell } from 'electron';
+import WebSocket from 'ws';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { WebSocketLikeConstructor } from '@supabase/realtime-js';
 import type { AccountState, AuthUser, PlanSnapshot } from '@shared/types';
 import {
   AUTH_REDIRECT,
@@ -127,7 +129,16 @@ function supabase(): SupabaseClient {
       detectSessionInUrl: false,
       storage: fileStorage,
       storageKey: 'gapir-me-session'
-    }
+    },
+    // This app never opens a realtime channel, but supabase-js constructs its RealtimeClient
+    // regardless, and that constructor probes for a WebSocket implementation. Electron 33
+    // embeds Node 20, which has no native WebSocket, so the probe leaves an unhandled
+    // rejection ("native WebSocket not found") in main.log on every launch — noise in the one
+    // file a remote user can send us. Hand it `ws`, already a dependency for the Gemini Live
+    // socket, and the probe never runs. The cast bridges a typing mismatch only — ws's
+    // constructor declares an internal-use `new (address: null)` overload the interface
+    // doesn't; at runtime the two are compatible.
+    realtime: { transport: WebSocket as unknown as WebSocketLikeConstructor }
   });
   return client;
 }

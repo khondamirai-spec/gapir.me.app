@@ -122,7 +122,7 @@ supabase secrets set GEMINI_MODEL="gemini-3.1-flash-lite"
 npm run dev
 ```
 
-Sign in from the **Hisob** pane, then hold Ctrl+CapsLock and speak. The log line should read
+Sign in from the **Hisob** pane, then hold Ctrl+Shift and speak. The log line should read
 `route=proxy`:
 
 ```

@@ -1,41 +1,31 @@
 import { EventEmitter } from 'node:events';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
-import { keyboard, Key } from '@nut-tree-fork/nut-js';
 
 /**
- * Global push-to-talk hotkey: hold Ctrl+CapsLock to record, release to transcribe.
+ * Global push-to-talk hotkey: hold Ctrl+Shift to record, release to transcribe.
  *
  * Electron's `globalShortcut` can't drive this. It only fires on press, never on release,
  * so there is no way to detect the "let go" that ends a dictation. We install a low-level
  * hook and track key state ourselves.
  *
- * ── Why this file sends keystrokes as well as reading them ──────────────────────────
- * uiohook-napi observes input; it cannot suppress it. CapsLock toggles on key DOWN, so
- * the OS flips caps state the instant a dictation starts and there is no way to stop it.
- * Left alone, every dictation would leave the user typing in CAPS until they noticed and
- * fixed it by hand.
+ * The trigger used to be Ctrl+CapsLock, and this file used to *send* a CapsLock tap as well
+ * as read one: CapsLock toggles on key down, uiohook can observe input but not suppress it,
+ * so every dictation flipped the user's caps state and we un-flipped it with a synthetic
+ * press afterwards. Ctrl+Shift has no such side effect, which is why none of that machinery
+ * survives here — Shift is a pure modifier, and holding it toggles nothing.
  *
- * So once the gesture ends we tap CapsLock once to undo the toggle the user's own press
- * caused. Two consequences worth knowing:
- *
- *   1. Our synthetic tap is visible to our own hook — injected input goes through the
- *      same low-level chain as real input. Without `restoringCaps` guarding it, that tap
- *      would look like a fresh trigger press and, with Ctrl still held, immediately start
- *      another recording. Hence the guard.
- *   2. The correction is a toggle, not a "set". It assumes exactly one toggle happened
- *      during the gesture, which holds because CapsLock does not auto-repeat.
- *
- * Set RESTORE_CAPS_LOCK to false to drop the correction and accept the flipped state.
+ * What Ctrl+Shift *is*, though, is the prefix of half the shortcuts in Windows —
+ * Ctrl+Shift+V, Ctrl+Shift+T, Ctrl+Shift+Esc. Holding the combo down while reaching for the
+ * third key looks exactly like the start of a dictation, so the moment ANY other key goes
+ * down mid-gesture, the gesture is cancelled: the user is typing a shortcut, not speaking.
+ * The sub-`minRecordingMs` guard in state.ts then discards whatever half-second of audio the
+ * false start captured, so a shortcut never pastes anything.
  */
-
-const RESTORE_CAPS_LOCK = true;
-/** Long enough for the injected tap to drain out of the hook before we listen again. */
-const RESTORE_GUARD_MS = 80;
 
 /** Modifier that must be held. */
 const CTRL = new Set<number>([UiohookKey.Ctrl, UiohookKey.CtrlRight]);
 /** The key that, together with the modifier, starts dictation. */
-const TRIGGER = new Set<number>([UiohookKey.CapsLock]);
+const TRIGGER = new Set<number>([UiohookKey.Shift, UiohookKey.ShiftRight]);
 
 export interface HotkeyEvents {
   on(event: 'start', cb: () => void): this;
@@ -49,8 +39,6 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
   /** True between emitting 'start' and 'stop' — guards against key auto-repeat. */
   private active = false;
   private started = false;
-  /** True while our own corrective CapsLock tap is in flight; see the note above. */
-  private restoringCaps = false;
 
   start(): void {
     if (this.started) return;
@@ -63,10 +51,6 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
       // user lets go; testing it here (as this once did) made Esc silently do nothing for
       // the whole TRANSCRIBING state, which is precisely when someone realises they
       // misspoke. The state machine ignores a cancel it has no use for.
-      //
-      // The CapsLock correction is the half that must stay gated on `active`: with no
-      // gesture in progress the user's caps state was never toggled by us, and tapping it
-      // here would flip caps on every stray press of Escape anywhere in Windows.
       if (e.keycode === UiohookKey.Escape) {
         if (this.active) this.endGesture('cancel');
         else this.emit('cancel');
@@ -74,11 +58,13 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
       }
 
       if (CTRL.has(e.keycode)) this.ctrlDown = true;
-      else if (TRIGGER.has(e.keycode)) {
-        // Ignore the CapsLock tap we injected ourselves.
-        if (this.restoringCaps) return;
-        this.triggerDown = true;
-      } else return;
+      else if (TRIGGER.has(e.keycode)) this.triggerDown = true;
+      else {
+        // A third key while Ctrl+Shift is held means this is a keyboard shortcut, not a
+        // dictation — Ctrl+Shift+V must paste-without-formatting, not paste a transcript.
+        if (this.active) this.endGesture('cancel');
+        return;
+      }
 
       // Modifiers auto-repeat while held, so keydown fires many times for one physical
       // press; `active` makes this idempotent.
@@ -92,7 +78,6 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
       const isCtrl = CTRL.has(e.keycode);
       const isTrigger = TRIGGER.has(e.keycode);
       if (!isCtrl && !isTrigger) return;
-      if (isTrigger && this.restoringCaps) return;
 
       if (isCtrl) this.ctrlDown = false;
       if (isTrigger) this.triggerDown = false;
@@ -104,31 +89,10 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
     uIOhook.start();
   }
 
-  /** End the current gesture and undo CapsLock's toggle. */
+  /** End the current gesture. */
   private endGesture(event: 'stop' | 'cancel'): void {
     this.active = false;
     this.emit(event);
-    void this.restoreCapsLock();
-  }
-
-  /**
-   * Tap CapsLock once to cancel out the toggle caused by the user's own press.
-   * Failures are logged, not thrown — a stuck caps state must never break dictation.
-   */
-  private async restoreCapsLock(): Promise<void> {
-    if (!RESTORE_CAPS_LOCK) return;
-
-    this.restoringCaps = true;
-    try {
-      await keyboard.pressKey(Key.CapsLock);
-      await keyboard.releaseKey(Key.CapsLock);
-    } catch (err) {
-      console.warn('[hotkey] could not restore CapsLock state:', err);
-    } finally {
-      setTimeout(() => {
-        this.restoringCaps = false;
-      }, RESTORE_GUARD_MS);
-    }
   }
 
   /**

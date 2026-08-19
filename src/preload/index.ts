@@ -3,7 +3,9 @@ import {
   IPC,
   type AccountState,
   type AudioDevice,
+  type DockGuides,
   type HistoryEntry,
+  type OverlayDock,
   type OverlayStatus,
   type PlanSnapshot,
   type Settings,
@@ -36,6 +38,37 @@ const api = {
    */
   onOverlayHover(cb: (hovered: boolean) => void): () => void {
     return subscribe(IPC.overlayHover, cb);
+  },
+
+  /**
+   * Overlay: the pill was clicked — toggle a hands-free dictation. Main decides what that
+   * means from the state machine; the pill just reports the click.
+   */
+  toggleDictation(): Promise<void> {
+    return ipcRenderer.invoke(IPC.overlayToggle);
+  },
+
+  /**
+   * Overlay: the pill is being held / was released. The renderer reports only the gesture —
+   * main moves the window itself by polling the cursor, and snaps it to the nearest dock on
+   * release. See beginDrag/endDrag in src/main/overlay.ts.
+   */
+  overlayDragStart(): Promise<void> {
+    return ipcRenderer.invoke(IPC.overlayDragStart);
+  },
+
+  overlayDragEnd(): Promise<void> {
+    return ipcRenderer.invoke(IPC.overlayDragEnd);
+  },
+
+  /** Overlay: which dock the pill sits in, so the CSS can align content toward that edge. */
+  onOverlayDock(cb: (dock: OverlayDock) => void): () => void {
+    return subscribe(IPC.overlayDock, cb);
+  },
+
+  /** Dock guides: the landing slots drawn while the pill is carried, and which one has it. */
+  onDockGuides(cb: (guides: DockGuides) => void): () => void {
+    return subscribe(IPC.dockGuides, cb);
   },
 
   getSettings(): Promise<Settings> {

@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An Electron tray app for Windows: hold **Ctrl+CapsLock**, speak Uzbek, release, and the
-transcript is pasted into whatever app has focus. Speech goes to **Google Gemini**, not to a
+An Electron tray app for Windows: hold **Ctrl+Shift**, speak Uzbek, release, and the
+transcript is pasted into whatever app has focus. Clicking the overlay pill does the same
+hands-free — click to start, click again (or Esc) to stop. Speech goes to **Google Gemini**, not to a
 local Whisper model. Gemini is the only provider; the Aisha adapters are gone. The surviving
 mentions of Aisha and of the user-key era — the `dropLegacyKeys()` list in
 [config.ts](src/main/config.ts) — are deliberate and must stay: `conf` preserves unknown
@@ -98,19 +99,41 @@ either control.
 Dev needs **Node 22+** and **ffmpeg on PATH** (`winget install ffmpeg`); the bundled copy is
 only fetched for packaged builds.
 
+**Quit any running copy before `npm run dev`, and check that you did.** The single-instance
+lock does not care that the second copy is a newer build: it quits, and the *running* one
+answers by opening its app window (see `second-instance` in [index.ts](src/main/index.ts)).
+So a window appears, nothing about it has changed, and the obvious conclusion — "my edit did
+nothing" — is wrong. `Get-Process electron | Stop-Process -Force` first; an installed build
+counts too, and shares the lock. This is the same mechanism sign-in rides on, so it cannot be
+relaxed for convenience.
+
+**To see a main-process change you must restart; to see a renderer change you usually
+mustn't.** Vite hot-reloads the three renderer pages in place — which is its own trap, below.
+
 On startup `@supabase/supabase-js` prints *"Node.js 20 and below are deprecated"* even on a
 Node 22 machine. It is reading **Electron's embedded Node**, which is 20.18 in Electron 33 —
-not the one that ran `npm`. Harmless today and not worth silencing, but it is the thing that
-will eventually force an Electron upgrade (37+ ships Node 22), so don't spend time chasing it
-as a local misconfiguration. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml))
+not the one that ran `npm`. Don't spend time chasing it as a local misconfiguration; it is a
+fact about the runtime we ship, and it is the thing that will force an Electron upgrade
+(37+ ships Node 22).
+
+**As of `@supabase/realtime-js` 2.112, that deprecation has teeth.** `createClient` builds a
+`RealtimeClient` eagerly, which throws *"Node.js detected but native WebSocket not found"* on
+Node 20 — so `supabase()` in [auth.ts](src/main/auth.ts) throws on its first call, `client` is
+never memoised, and every later call throws too. `initAuth` is launched with `void`, so the
+app boots normally and the failure surfaces only as an `UnhandledPromiseRejectionWarning` at
+startup and **no `[auth]` line at all** in the log. That absence is the tell: no session is
+restored, sign-in cannot complete, and every dictation on a configured build says
+*"Kirish kerak"*. It is not dev-only — a packaged build runs the same embedded Node. The
+dependency is a caret range, so a machine that installed before 2.112 will not reproduce it.
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml))
 runs on `windows-latest` — the native deps ship platform-specific binaries and the modules
 under test import them.
 
 ## Architecture
 
 Three electron-vite targets, built from [electron.vite.config.ts](electron.vite.config.ts):
-`main`, `preload`, and two renderer HTML entries (`overlay`, `app`). `@shared` aliases
-`src/shared`.
+`main`, `preload`, and three renderer HTML entries (`overlay`, `dock-guides`, `app`).
+`@shared` aliases `src/shared`.
 
 **[src/main/state.ts](src/main/state.ts) is the only module that coordinates the others.**
 Everything else in `src/main/` is a leaf with no knowledge of its siblings — `audio.ts`
@@ -125,7 +148,8 @@ The leaves, so you can find a behaviour without opening all of them:
 | `audio.ts` | ffmpeg dshow capture, device enumeration, `rms`, `pcmToWav` |
 | `hotkey.ts` | the uiohook listener that emits `start` / `stop` / `cancel` |
 | `inject.ts` | clipboard save → paste → restore-on-a-timer |
-| `overlay.ts` | the pill window, its bounds, and `applyVisibility()` |
+| `overlay.ts` | the pill window, its bounds, `applyVisibility()`, and the drag magnet |
+| `dock-guides.ts` | the landing slots drawn while the pill is dragged — owned by `overlay.ts`, not a peer |
 | `history.ts` | the capped history log and its change listener |
 | `config.ts` | the settings store, plus `geminiModel()`, `geminiRealtimeEnabled()` and `resolveGeminiKey()` — the three things that are decided for the user rather than by them |
 | `auth.ts` | the Supabase session: Google PKCE sign-in, the encrypted session store, `accessToken()`, the plan snapshot |
@@ -140,6 +164,20 @@ The leaves, so you can find a behaviour without opening all of them:
 process can hold a DirectShow device at a time**, so a dictation has to win. `state.ts` calls
 `stopMicTest()` before opening the microphone, and the dependency points that way (state →
 mic-test) on purpose — never the reverse.
+
+`dock-guides.ts` is the one place a leaf imports another, and it is not an exception to the
+rule so much as a window that belongs to `overlay.ts`: the slots exist only inside a drag,
+and the drag loop is the only thing that knows which one the magnet has. Routing a highlight
+that changes 120 times a second through the state machine would buy nothing.
+
+**Never move the overlay window with `setPosition`.** On a fractionally scaled display —
+125% is the Windows default on most laptops — it makes the window *grow* by about a pixel
+per call, because Electron rounds the DIP→physical conversion and then re-derives the size
+from the rounded rect, feeding each call's error into the next. A drag makes over a hundred
+calls a second, so the window inflates from 360×150 to larger than the screen in seconds,
+and since the pill is anchored to the window's bottom edge it slides downward out of the
+user's hand and then off the display entirely. `moveTo()` restates `WIDTH`/`HEIGHT` on every
+move for exactly this reason.
 
 The dictation flow:
 
@@ -325,6 +363,18 @@ the entire main↔renderer surface, exposed as `window.api`. Every `on*` subscri
 unsubscribe function because the app window swaps panes without reloading. Channel names come
 from the `IPC` const, never string literals.
 
+**A renderer holds no state main cannot re-establish, and main re-establishes it on every
+`did-finish-load` — `on`, never `once`.** A page loads more than once: Vite reloads the
+overlay whenever its HTML or CSS is touched, and a crashed renderer is reloaded in the field.
+A page that comes back without being re-told everything draws *defaults*, which is a
+particularly nasty class of bug because the defaults look deliberate — the pill reappears in
+the bottom dock, unhovered, with the level meter of a dictation that is not happening,
+while main's own state says otherwise and nothing in the log is wrong. The overlay's handler
+in [overlay.ts](src/main/overlay.ts) re-pushes status, dock and hover for exactly this
+reason; anything new that main pushes belongs in it. Its partner is the markup: a renderer's
+first frame is drawn before any IPC arrives, so the HTML has to *be* the resting state
+rather than assume a message will fix it.
+
 The renderers are **plain TypeScript and hand-written CSS** — no framework, no component
 library. [app.ts](src/renderer/app/app.ts) draws all five panes, the settings modal and the
 first-run welcome; keep it that way rather than reaching for React.
@@ -388,14 +438,14 @@ tray's *Loglar papkasi* item opens. That file is the whole of what you get back 
 whose dictation produced nothing, so treat it as the interface it is: anything worth
 diagnosing a remote failure with has to go through `console.*` to end up there.
 
-**Runtime state lives in `%APPDATA%\gapir me\`** — `settings.json` (all plaintext; there
+**Runtime state lives in `%APPDATA%\whisper-uz\`** — `settings.json` (all plaintext; there
 is no credential in it), `auth.json` (the Supabase session, **encrypted** with `safeStorage`
 — a refresh token is a credential, which is exactly why it is not in `settings.json`),
-`history.json`, and `logs\main.log`. Note the folder is
-named after `productName`, so a **packaged** build reads and writes `gapir me\` while
-`npm run dev` uses `whisper-uz\` (from `package.json`'s `name`). They are separate installs
-as far as settings and history are concerned, which is usually what you want and is
-occasionally the reason a bug "only happens in dev". Read `settings.json` before trusting any
+`history.json`, and `logs\main.log`. Note the folder is named after `package.json`'s `name`,
+**in packaged builds too**: `productName` lives only in `electron-builder.yml`, which Electron
+never reads at runtime, so a packaged build and `npm run dev` share the same folder — and the
+same single-instance lock, which is why an installed copy must be quit before running dev.
+Read `settings.json` before trusting any
 claim about what the app is configured to do, including the user's. `conf` re-reads from disk
 on each `get`, so editing that file takes effect on the next hotkey press with no restart —
 handy for bisecting a bad setting, and a reason not to assume a running app is still using
@@ -438,11 +488,33 @@ The README's **"Things that look wrong but aren't"** section documents the decis
 look like mistakes to anyone tidying up — read it before simplifying any of:
 
 - ffmpeg subprocess capture instead of `getUserMedia` ([audio.ts](src/main/audio.ts))
-- the hotkey module *sending* CapsLock as well as reading it, and the `restoringCaps` guard
-  ([hotkey.ts](src/main/hotkey.ts))
+- the hotkey cancelling the gesture when any third key goes down — Ctrl+Shift is the prefix
+  of half the shortcuts in Windows ([hotkey.ts](src/main/hotkey.ts))
 - not using Electron's `globalShortcut`
-- `showInactive()` + `focusable: false` + a fixed 360×80 window that never resizes
-  ([overlay.ts](src/main/overlay.ts))
+- `showInactive()` + `focusable: false` + a window that never resizes to fit a bigger pill
+  ([overlay.ts](src/main/overlay.ts)) — it does *move*, though: holding the pill drags the
+  window (main chases the cursor; the renderer only reports the button), and it snaps to a
+  dock — left edge, bottom centre, right edge — persisted as the `overlayDock` setting,
+  together with the height it was dropped at (`overlayDockY`, a fraction of the work area).
+  A side dock is an *edge*, not a point: pinning it to the vertical middle meant every drop
+  up an edge slid back to the centre of the screen, so the magnet has no vertical target
+  there at all.
+  The dock is also the *only* thing that changes the window's size: 360×150 at the bottom,
+  360×`SIDE_HEIGHT` at a side, because a side-docked pill is rotated a quarter turn to run
+  along the edge and its tooltip then needs the height. The pill floats *inside* that
+  window rather than filling it: `PAD_BOTTOM` / `PAD_SIDE` are the room its drop shadow
+  needs, and a side-docked pill reuses both by being rotated about its own bottom edge. All of them are
+  duplicated into the `#hit` rules in the overlay's CSS, which is the price of main
+  hit-testing a window Chromium never tells it about
+- the pill's anchor being `position: absolute` + `left`/`bottom`/`transform` rather than
+  flex alignment — the dock is applied as the window glides to it, and `justify-content`
+  cannot be transitioned
+- the magnet leaning the pill at a dock by at most `MAX_ASSIST_PX` instead of a fraction of
+  the distance — a fraction scales with how far away the slot is, which is backwards, and
+  it tore the pill out of the hand carrying it. The pill therefore never reaches the slot
+  mid-drag; `endDrag` glides it there
+- `#pill.error` alone dropping the side docks' rotation — a sideways three-line sentence is
+  not readable, and it is why a side-docked window keeps the full 360 width
 - main hit-testing the cursor on an interval to drive the pill's hover, rather than letting
   the overlay receive mouse events — Electron's `forward: true` delivers nothing here
 - gating the whole bootstrap on the single-instance lock, not just calling `app.quit()` —
@@ -495,9 +567,16 @@ Vitest, `environment: node`, only `src/**/*.test.ts`. There is no Electron runti
 [vitest.config.ts](vitest.config.ts) aliases the whole `electron` module to
 [test/electron-stub.ts](test/electron-stub.ts), and `electron-store` is `vi.mock`ed per test
 file with an in-memory class. Consequently **only pure helpers are unit-tested** —
-`parseDeviceList`, `friendlyFfmpegError`, `rms`, `pcmToWav`, `bottomCenterBounds`, the Gemini
+`parseDeviceList`, `friendlyFfmpegError`, `rms`, `pcmToWav`, the overlay's dock geometry
+(`bottomCenterBounds` / `dockBounds` / `dockForPosition` / `magnetTarget`), the Gemini
 prompt/parse/sanitize trio, `countWords`/`wordsPerMinute`, the key-pool cooldowns, and
 history ordering/cap.
+
+The overlay tests are worth a note of their own, because they are the only place the *feel*
+of a gesture is pinned down: `magnetTarget` is asserted to move the pill by no more than
+`MAX_ASSIST_PX` at any distance, and to leave the vertical axis of a side dock strictly
+alone. Both encode complaints ("it flew out of my hand", "it snaps back to the middle of the
+screen") that are otherwise only reproducible by dragging a window with a mouse.
 
 Two test files live in `src/` but cover code in `supabase/`, which is the only way to test
 that code at all — Deno functions cannot be driven from vitest, but the *decisions* inside
