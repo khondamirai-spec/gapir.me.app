@@ -47,8 +47,16 @@ protocols:
       - gapirme
 
 # Owner and repo are inferred from the git remote, so this stays correct if the repo moves.
+#
+# `releaseType` is NOT optional here, whatever the default suggests. electron-builder
+# publishes a *draft* release unless told otherwise, and a draft is invisible to everyone
+# but us: `/releases/latest` skips it, the asset 404s, and electron-updater finds no
+# latest.yml — while the workflow reports a green tick, because from its point of view the
+# upload succeeded. That combination cost v0.2.1 through v0.2.3, and it is worth stating
+# plainly: a release nobody can download is not a release, and nothing in CI will say so.
 publish:
   - provider: github
+    releaseType: release
 
 win:
   target:
