@@ -37,11 +37,27 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RESOURCES = join(ROOT, 'resources');
 
-/** Pinned build — update `url` and `sha256` together. */
+/**
+ * Pinned build — update `url` and `sha256` together.
+ *
+ * BtbN's autobuild releases are DELETED after a few weeks, so a pin here rots on
+ * a timer and takes the release workflow down with it: this script runs on a
+ * fresh checkout in CI, the download 404s, `fail()` exits 1, and `npm run
+ * release` never runs — so a tag builds nothing and no installer is published.
+ * It cannot be reproduced locally, because line ~72 skips the whole thing when
+ * `resources/ffmpeg.exe` is already sitting there from the last time.
+ *
+ * That is what happened to v0.2.1 and v0.2.2, whose tags exist with no assets
+ * attached. If a release ever publishes nothing again, check this URL first.
+ *
+ * The durable fix is to stop depending on someone else's retention policy:
+ * upload this exact zip to a release of our own and point `url` at that. Then
+ * the digest below never has to change again.
+ */
 const BUILD = {
-  label: 'ffmpeg n8.1.2 win64-lgpl (BtbN autobuild-2026-07-24)',
-  url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-24-13-32/ffmpeg-n8.1.2-31-g8c9502e9b0-win64-lgpl-8.1.zip',
-  sha256: '972c57498dff104fff2d53b8b0cb3641f45b8ff1e7cc1b00257c9e34435fe853'
+  label: 'ffmpeg n8.1.2 win64-lgpl (BtbN autobuild-2026-08-18)',
+  url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-18-15-03/ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1.zip',
+  sha256: '94df4ac3bbe6b104c7fbcfd8bfa3a0195bf52c23045f5e9b982f436e8b18256d'
 };
 
 const TARGET = join(RESOURCES, 'ffmpeg.exe');
