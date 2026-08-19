@@ -34,13 +34,6 @@ extraResources:
     to: ffmpeg.exe
   - from: resources/ffmpeg-LICENSE.txt
     to: ffmpeg-LICENSE.txt
-  # The pre-Supabase key pool, kept only for builds made before a backend was configured —
-  # Phase 5 of docs/supabase-setup.md deletes it. Shipped as a plain file rather than baked
-  # into the bundle so a spent key can be replaced on a machine without a new build — and so
-  # it is obvious that these keys are extractable, and must therefore be free-tier keys with
-  # billing disabled. See src/main/keys.ts.
-  - from: resources/gemini-keys.json
-    to: gemini-keys.json
 
 # The custom scheme the Google sign-in comes back on.
 #

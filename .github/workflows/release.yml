@@ -35,16 +35,6 @@ jobs:
       - name: Fetch ffmpeg
         run: npm run ffmpeg
 
-      # The pool every installed copy dictates on. resources/gemini-keys.json is gitignored,
-      # so the checkout above does not have it and electron-builder would have no file to
-      # copy into the installer — see the note at the top of scripts/write-keys.mjs. The
-      # script exits non-zero on an empty secret, which is deliberate: a release that ships
-      # without keys installs fine and then fails on every hotkey press.
-      - name: Write the bundled key pool
-        env:
-          GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
-        run: node scripts/write-keys.mjs
-
       - name: Build and publish
         run: npm run release
         env:

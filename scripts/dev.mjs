@@ -18,10 +18,8 @@ delete env.ELECTRON_RUN_AS_NODE;
 // Load .env into the child's environment. Electron's main process doesn't get Vite's
 // import.meta.env, so `resolveGeminiKey()` reads process.env.GEMINI_API_KEY (or
 // GOOGLE_API_KEY — Google's own SDKs read both and people already have one or the other)
-// instead, which means the values have to be injected here. WHISPER_UZ_BUNDLED_KEYS and
-// WHISPER_UZ_GEMINI_LIVE_MODEL ride along the same way: the first is how you test the
-// shared-key fallback without editing resources/gemini-keys.json, the second is how you
-// try a different Live API model without a rebuild.
+// instead, which means the values have to be injected here. WHISPER_UZ_GEMINI_LIVE_MODEL
+// rides along the same way: it is how you try a different Live API model without a rebuild.
 if (existsSync('.env')) {
   for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);

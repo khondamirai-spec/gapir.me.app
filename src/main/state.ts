@@ -9,7 +9,6 @@ import {
   resolveGeminiKey,
   type KeyOrigin
 } from './config';
-import { markKeyExhausted, nextBundledKey } from './keys';
 import { addHistory } from './history';
 import { stopMicTest } from './mic-test';
 import { isSignedIn } from './auth';
@@ -18,7 +17,7 @@ import { geminiBatch } from './stt/gemini-batch';
 import { geminiLive } from './stt/gemini-live';
 import { proxyBatch } from './stt/proxy-batch';
 import { mockStt, useMockStt } from './stt/mock';
-import { SttError, type SttSession, type SttSessionOptions } from './stt/types';
+import type { SttSession, SttSessionOptions } from './stt/types';
 import type { AppState, Settings } from '@shared/types';
 
 /**
@@ -39,28 +38,22 @@ const ERROR_DISPLAY_MS = 2500;
 const DONE_DISPLAY_MS = 900;
 
 /**
- * How many bundled keys one dictation may burn through before giving up.
- *
- * A spent free-tier key costs a round trip to discover, and the user is standing there with
- * a hotkey in their hand — so the pool is walked, but only a little way. Whatever is left
- * stays healthy for the next press, which will start from the first key that still works.
- */
-const MAX_KEY_ROTATIONS = 3;
-
-/**
  * Where this dictation's transcript will come from.
  *
  *   proxy  — our Supabase Edge Function, holding the Gemini key and the user's quota.
  *            **This is the path every installed copy takes.**
  *   direct — Gemini, called from this process with a key in `.env`. A developer convenience,
  *            so that working on the app never spends the quota real users are dictating on.
- *   pool   — Gemini, on a key shipped inside the installer. The way this app used to work,
- *            kept alive only for builds made before a backend was configured. It is what
- *            Phase 5 of docs/supabase-setup.md deletes, and nothing new should reach for it.
  *   mock   — npm run dev:mock.
  *   none   — nothing can transcribe; the caller shows an error instead of recording.
+ *
+ * There used to be a fourth transcribing route, `pool` — Gemini on a key shipped inside the
+ * installer, the way this app worked before it had a backend. Phase 5 of
+ * docs/supabase-setup.md removed it: a key inside an installer is extractable by anyone who
+ * downloads it, which once the proxy was live made it a hole in the paywall rather than a
+ * safety net.
  */
-type Route = 'proxy' | 'direct' | 'pool' | 'mock' | 'none';
+type Route = 'proxy' | 'direct' | 'mock' | 'none';
 
 class Dictation {
   private state: AppState = 'IDLE';
@@ -143,41 +136,24 @@ class Dictation {
   /**
    * Decide how this dictation will be transcribed.
    *
-   * The order is the product decision, and it is not the order it looks like it should be:
-   *
-   * A developer's own `.env` key wins over the proxy so that working on the app never spends
-   * the quota real users are dictating on, and never bills our Gemini key for a test. A
-   * packaged build has no environment to read, so on an installed copy that branch is empty
-   * and `proxy` is the answer.
-   *
-   * `pool` is last, and only when no backend is configured at all. That is the pre-Supabase
-   * way this app worked — a key inside the installer, extractable by anyone. It survives so
-   * that a build made before the backend existed still dictates, not because it is a
-   * fallback worth having: once the proxy is live, a pool key would be a hole in the paywall
-   * rather than a safety net. Deleting it is Phase 5.
+   * The order is the product decision: a developer's own `.env` key wins over the proxy so
+   * that working on the app never spends the quota real users are dictating on, and never
+   * bills our Gemini key for a test. A packaged build has no environment to read, so on an
+   * installed copy that branch is empty and `proxy` is the answer.
    */
   private resolveRoute(): Route {
     if (useMockStt()) return 'mock';
 
-    const env = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-    if (env) {
-      this.key = env;
-      this.keyOrigin = 'env';
-      return 'direct';
-    }
-
-    if (isConfigured()) {
-      this.key = '';
-      this.keyOrigin = 'none';
-      // Signed out is a real, expected state rather than an error condition — it is simply
-      // the answer "not until you sign in", which onStart turns into a message.
-      return isSignedIn() ? 'proxy' : 'none';
-    }
-
     const resolved = resolveGeminiKey();
     this.key = resolved.key;
     this.keyOrigin = resolved.origin;
-    return resolved.key ? 'pool' : 'none';
+    if (resolved.key) return 'direct';
+
+    // Signed out is a real, expected state rather than an error condition — it is simply
+    // the answer "not until you sign in", which onStart turns into a message. An
+    // unconfigured build has nothing to transcribe with at all; the pool of bundled keys
+    // that used to catch that case is gone (Phase 5 of docs/supabase-setup.md).
+    return isConfigured() && isSignedIn() ? 'proxy' : 'none';
   }
 
   private async onStart(): Promise<void> {
@@ -392,33 +368,17 @@ class Dictation {
   }
 
   /**
-   * Post the utterance straight to Gemini, stepping to the next key in the pool if this one
-   * turns out to be spent or revoked.
+   * Post the utterance straight to Gemini — the `direct` route, a developer's `.env` key.
    *
-   * The pre-Supabase path, reached only on the `direct` and `pool` routes. Rotation is for
-   * pool keys only, deliberately: a developer running against their own GEMINI_API_KEY who
-   * hits a quota wall needs to be told that about their own account, not to have the app
-   * quietly start spending the shipped keys instead.
+   * One request, no retry on quota or auth failures, deliberately: a developer running
+   * against their own GEMINI_API_KEY who hits a quota wall needs to be told that about
+   * their own account. (The rotation that used to live here walked the bundled key pool,
+   * which Phase 5 of docs/supabase-setup.md removed.)
    */
   private async batchTranscribe(settings: Settings): Promise<string> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const session = await geminiBatch.startSession(this.sessionOptions(settings));
-        for (const chunk of this.pcm) session.pushAudio(chunk);
-        return await session.end();
-      } catch (err) {
-        const code = err instanceof SttError ? err.code : undefined;
-        const rotatable = code === 'quota' || code === 'auth';
-        if (this.keyOrigin !== 'pool' || !rotatable || attempt >= MAX_KEY_ROTATIONS) throw err;
-
-        markKeyExhausted(this.key, 'daily');
-        const next = nextBundledKey(this.key);
-        if (!next) throw err;
-
-        console.warn(`[state] pool key ${code}, retrying the dictation on the next key`);
-        this.key = next;
-      }
-    }
+    const session = await geminiBatch.startSession(this.sessionOptions(settings));
+    for (const chunk of this.pcm) session.pushAudio(chunk);
+    return await session.end();
   }
 
   private onCancel(): void {

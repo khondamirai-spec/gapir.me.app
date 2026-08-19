@@ -266,7 +266,7 @@ class GeminiBatchSession implements SttSession {
       lastBody = await attempt.text().catch(() => '');
       if (isFatalBadRequest(lastBody)) {
         // A 400 that names the key is an auth failure wearing the wrong status code, and
-        // the caller needs to know that: on a bundled key it means "try the next one".
+        // the caller needs to know that rather than seeing a generic bad request.
         throw new SttError(
           geminiErrorMessage(400, lastBody),
           false,
@@ -300,17 +300,15 @@ class GeminiBatchSession implements SttSession {
         // for the other. `gemini-3.6-flash` allows 20 requests a day on the free tier, so
         // "try again in 54 seconds" would be a lie that costs the user their afternoon.
         //
-        // The daily message names no fix, deliberately: the key is the app's and so is the
-        // model, so there is nothing the person holding the hotkey can change. The state
-        // machine has already tried the rest of the pool by the time this is seen.
+        // The daily message names no fix, deliberately: this adapter only runs on a
+        // developer's own key (installed copies dictate through the proxy), and the model
+        // is not the user's to change either.
         throw new SttError(
           isFreeTierQuotaExhausted(body)
             ? 'Bugungi limit tugadi — ertaga yana ishlaydi'
             : `Gemini limitga yetdi — ${Math.ceil(waitMs / 1000)} soniyadan keyin urinib ko‘ring`,
           false,
-          // `quota` is what tells the caller this key is spent rather than wrong: when the
-          // app is running on a bundled key, that is the difference between failing the
-          // dictation and quietly moving to the next key in the pool.
+          // `quota` is what tells the caller this key is spent rather than wrong.
           'quota'
         );
       }

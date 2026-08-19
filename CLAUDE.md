@@ -27,12 +27,13 @@ ours to change, not the user's to change in a text box, and `Settings` in
 `WHISPER_UZ_GEMINI_MODEL` in a developer's `.env` bypass the server entirely so that working
 on the app never spends real users' quota; a packaged build has no environment to read.
 
-The bundled key pool in [src/main/keys.ts](src/main/keys.ts) is **the previous design, kept
-alive only for builds made before a backend was configured** — `resolveRoute()` in
-[state.ts](src/main/state.ts) reaches for it only when `isConfigured()` is false. Once the
-proxy is live a pool key is a hole in the paywall rather than a safety net; Phase 5 of the
-setup doc deletes it, along with `resources/gemini-keys.json`, `scripts/write-keys.mjs` and
-the `GEMINI_KEYS` CI secret. Nothing new should reach for it.
+**The bundled key pool is gone** (Phase 5 of the setup doc, done): the app used to ship
+free-tier Gemini keys inside the installer (`src/main/keys.ts`, `resources/gemini-keys.json`,
+`scripts/write-keys.mjs`, the `GEMINI_KEYS` CI secret), because before there was a backend it
+had nothing else to dictate on. A key inside an installer is extractable by anyone who
+downloads it, so once the proxy was live the pool was a hole in the paywall — an installed
+copy now dictates through the proxy or not at all, which is what makes the paid plan real.
+Don't reintroduce a client-side key for any reason.
 
 There is no main window in the usual sense. The app lives in the tray plus a floating
 always-on-top pill; the `BrowserWindow` in [src/main/index.ts](src/main/index.ts) is a place
@@ -91,7 +92,7 @@ SDKs read both and people already have one or the other) and maps `--mock` / `--
 onto `WHISPER_UZ_MOCK_STT` / `WHISPER_UZ_LOG_FRAMES`.
 
 Those env vars are a **dev convenience only**: a packaged build on someone else's machine
-sees none of them, so what ships is always the bundled pool on `DEFAULT_GEMINI_MODEL`. The
+sees none of them, so what ships always dictates through the proxy on `DEFAULT_GEMINI_MODEL`. The
 same goes for `WHISPER_UZ_GEMINI_MODEL` and `WHISPER_UZ_GEMINI_REALTIME`, which exist so a
 model or the Live socket can be tried without touching a settings screen that no longer has
 either control.
@@ -155,7 +156,6 @@ The leaves, so you can find a behaviour without opening all of them:
 | `auth.ts` | the Supabase session: Google PKCE sign-in, the encrypted session store, `accessToken()`, the plan snapshot |
 | `billing.ts` | asks the server for a Payme checkout URL and opens it |
 | `supabase-config.ts` | project URL, anon key, the `gapirme://` scheme — all public by design |
-| `keys.ts` | the bundled key pool and its cooldowns — **the pre-Supabase path**, see above |
 | `mic-test.ts` | the Settings level meter |
 | `updater.ts` | electron-updater, surfaced as `IPC.updateStatus` |
 | `logger.ts` | tees `console.*` into `userData\logs\main.log` — a packaged app has no console |
@@ -189,11 +189,10 @@ hotkey 'cancel' (Esc) ─▶ back to IDLE, nothing pasted
 ```
 
 `resolveRoute()` decides where the transcript will come from, once, at hotkey-press time —
-`proxy` (every installed copy), `direct` (a developer's `.env` key), `pool` (pre-Supabase
-builds), `mock`, or `none`. **`route=` is the first field to read in the `[state]` log line**,
-because with a server in the path the prior question to "which model ran?" is whether the
-request went through the server at all. Its ordering is documented on the function and is not
-the order it looks like it should be.
+`proxy` (every installed copy), `direct` (a developer's `.env` key), `mock`, or `none`.
+**`route=` is the first field to read in the `[state]` log line**, because with a server in
+the path the prior question to "which model ran?" is whether the request went through the
+server at all.
 
 `AppState` (`IDLE | RECORDING | TRANSCRIBING | INJECTING | DONE | ERROR`) lives in
 [src/shared/types.ts](src/shared/types.ts) alongside `Settings`, `StyleSettings`,
@@ -279,24 +278,15 @@ it, and each is a way the sandbox at test.paycom.uz fails an integration:
 `ACCOUNT_FIELD` (`order_id`) must match the requisite configured in the merchant cabinet
 exactly, or every payment fails validation with a cause invisible from the code.
 
-### The key pool (pre-Supabase)
+### The key pool (removed)
 
-[keys.ts](src/main/keys.ts) holds the keys the app used before there was a server, read at
-startup from `resources/gemini-keys.json` (shipped as an extraResource) and from
-`WHISPER_UZ_BUNDLED_KEYS`.
-
-Free-tier keys are capped per key per day, so a pool is only useful if a spent key steps
-aside — `markKeyExhausted()` benches it until local midnight and `nextBundledKey()` hands
-over the next one. The retry loop lives in `batchTranscribe()` in
-[state.ts](src/main/state.ts) and **only rotates for bundled keys**: if a developer's own key
-is out of quota, silently spending someone else's would hide a fact they need about their own
-account. When every key is cooling down, `pickBundledKey()` still returns one — our cooldowns
-are a guess and Google's allowances are the authority.
-
-**A key inside an installer is extractable by anyone who downloads it**, which is exactly why
-this is on its way out: the same rotation now runs inside the `transcribe` function, over keys
-nobody can extract. The server-side copy is deliberately a copy rather than shared code — it
-runs in Deno, against a different lifetime (an Edge Function instance rather than a process).
+Before there was a server, the app shipped free-tier Gemini keys inside the installer and
+rotated through them as each hit its daily cap. Phase 5 of the setup doc removed all of it —
+`src/main/keys.ts` and its test, `resources/gemini-keys.json`, `scripts/write-keys.mjs`, the
+`GEMINI_KEYS` CI secret and the `pool` route — because a key inside an installer is
+extractable by anyone who downloads it, which once the proxy was live made the pool a paywall
+bypass. The same per-key rotation and cooldown logic now lives inside the `transcribe` Edge
+Function, over keys nobody can extract.
 
 ### STT adapters
 
@@ -427,10 +417,10 @@ The failure everyone hits is "I held the keys, I spoke, no text appeared". The f
 places to lose the transcript, and they are distinguishable in about a minute if you look in
 this order.
 
-**The `[state]` log line is the ground truth.** Every completed dictation prints the model,
-which key it used (`key=pool` / `key=env`), audio length, round-trip time and the transcript
-from [state.ts](src/main/state.ts). It exists so that "which model actually ran?" is a fact
-you read rather than one you infer.
+**The `[state]` log line is the ground truth.** Every completed dictation prints the route,
+the model, which key it used (`key=env` / `key=none`), audio length, round-trip time and the
+transcript from [state.ts](src/main/state.ts). It exists so that "which model actually ran?"
+is a fact you read rather than one you infer.
 
 On an installed copy there is no console to read it in, so [logger.ts](src/main/logger.ts)
 tees `console.log`/`warn`/`error` into `logs\main.log` under userData — which is what the
@@ -469,10 +459,10 @@ handling in [gemini-batch.ts](src/main/stt/gemini-batch.ts) is for, and why it d
 a burst limit from a daily cap via `isFreeTierQuotaExhausted`: both arrive as a 429 carrying
 a `retryDelay`, but the daily one's delay is fiction — Google says "retry in 52s" for an
 allowance that resets tomorrow. Waits above `MAX_RETRY_WAIT_MS` (6s) are refused rather than
-slept through, because the user is standing there with a hotkey in their hand. The state
-machine then moves to the next key in the pool — and when the pool is spent the message says
-so without offering a fix, because the user has no key and no model to switch to. Refilling
-`resources/gemini-keys.json` is the fix, and it is ours.
+slept through, because the user is standing there with a hotkey in their hand. On the proxy
+route the same rotation runs server-side across the `GEMINI_API_KEYS` pool; when every server
+key is spent, that is our outage to fix (`supabase secrets set GEMINI_API_KEYS=...`), not the
+user's.
 
 **Silent capture looks exactly like a broken transcriber.** `defaultDeviceId()` is literally
 `cachedDevices[0]` — DirectShow has no "default device" concept — so on a machine whose first
@@ -569,7 +559,7 @@ Vitest, `environment: node`, only `src/**/*.test.ts`. There is no Electron runti
 file with an in-memory class. Consequently **only pure helpers are unit-tested** —
 `parseDeviceList`, `friendlyFfmpegError`, `rms`, `pcmToWav`, the overlay's dock geometry
 (`bottomCenterBounds` / `dockBounds` / `dockForPosition` / `magnetTarget`), the Gemini
-prompt/parse/sanitize trio, `countWords`/`wordsPerMinute`, the key-pool cooldowns, and
+prompt/parse/sanitize trio, `countWords`/`wordsPerMinute`, and
 history ordering/cap.
 
 The overlay tests are worth a note of their own, because they are the only place the *feel*
@@ -605,7 +595,8 @@ Before cutting a release, check that
 [src/main/supabase-config.ts](src/main/supabase-config.ts) holds a real project URL and anon
 key. Those two are **public by design** and belong in git — RLS is what protects the data, and
 the anon key grants nothing but "read your own rows". Ship them empty and `isConfigured()` is
-false, every install falls through to the bundled pool, and nobody can sign in or pay.
+false, nobody can sign in or pay, and every dictation fails — there is no client-side
+fallback any more.
 
 `protocols:` in [electron-builder.yml](electron-builder.yml) is what registers the
 `gapirme://` scheme with the installer. Without it sign-in works perfectly in dev — where
@@ -617,15 +608,6 @@ through `supabase db push` / `supabase functions deploy`, not through a release;
 build talks to whatever is deployed. That decoupling is mostly a gift — the model, the price
 and the daily limits all change without a release — but it means a breaking change to the
 Edge Function's request shape strands every installed copy until they update.
-
-While the bundled pool still exists (Phase 5 of the setup doc removes it),
-`resources/gemini-keys.json` must hold real keys before `npm run dist`. That file is
-**gitignored**, so CI writes it: the release workflow runs
-[scripts/write-keys.mjs](scripts/write-keys.mjs) from the `GEMINI_KEYS` repository secret
-(comma-separated), and that script exits non-zero on an empty secret rather than letting a
-keyless installer reach a release page. Setting `WHISPER_UZ_BUNDLED_KEYS` in the build
-environment does **not** work for this and never did — it is read at runtime on the user's
-machine, and a packaged build has no environment to inherit it from.
 
 The `repository` field in `package.json` is what electron-builder and electron-updater infer
 owner and repo from, so it has to match the repo the releases actually live in.

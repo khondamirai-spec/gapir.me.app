@@ -8,16 +8,16 @@ import {
   type Settings,
   type StyleSettings
 } from '@shared/types';
-import { pickBundledKey } from './keys';
 
 /**
  * Persisted settings.
  *
  * Everything in here is plaintext, and that is now true without an asterisk: there is no
- * credential to protect. The app dictates on the keys it ships with (src/main/keys.ts), so
- * nothing a user types on the Settings screen is a secret — a device id, a name, a
- * scratchpad and three switches. The safeStorage/DPAPI machinery that used to guard the
- * user's own API key went with the field it guarded.
+ * credential to protect. The app dictates through the Supabase proxy, whose key lives on the
+ * server, so nothing a user types on the Settings screen is a secret — a device id, a name,
+ * a scratchpad and three switches. The safeStorage/DPAPI machinery that used to guard the
+ * user's own API key went with the field it guarded (the session it now guards lives in
+ * src/main/auth.ts, not here).
  */
 
 interface StoreShape {
@@ -156,32 +156,26 @@ export function geminiRealtimeEnabled(): boolean {
 /**
  * Where the key doing the transcribing comes from.
  *
- * `pool` — one of the keys shipped with the app, the case every installed copy is in.
  * `env`  — GEMINI_API_KEY/GOOGLE_API_KEY from a developer's .env.
- * `none` — neither, the only state in which dictation cannot work at all.
+ * `none` — no key in this process. On an installed copy that is the *normal* state: every
+ *          dictation goes through the Supabase proxy, and the key lives on the server.
  *
- * The distinction is not cosmetic: only a pool key may be rotated when it comes back spent
- * (src/main/state.ts). Rotating away from a developer's own key would hide the one fact they
- * need about their own account.
+ * There used to be a third origin, `pool` — keys shipped inside the installer, from before
+ * the app had a backend. Phase 5 of docs/supabase-setup.md removed it.
  */
-export type KeyOrigin = 'pool' | 'env' | 'none';
+export type KeyOrigin = 'env' | 'none';
 
 /**
- * The key that will actually do the transcribing.
+ * The key in this process's own hands, if any.
  *
- * A developer's own key first, then the pool the app ships with. The order looks backwards
- * for a product where everyone shares one key, and it isn't: a packaged build has no
- * environment to read, so on every installed copy the first branch is empty and the pool is
- * the answer. The branch exists so that working on the app doesn't spend the keys real users
- * are dictating on. GOOGLE_API_KEY is accepted alongside GEMINI_API_KEY because Google's own
+ * A developer convenience only: a packaged build has no environment to read, so on every
+ * installed copy this is empty and the dictation is routed through the proxy instead
+ * (src/main/state.ts). The branch exists so that working on the app doesn't spend real
+ * users' quota. GOOGLE_API_KEY is accepted alongside GEMINI_API_KEY because Google's own
  * SDKs read both and people already have one or the other in their .env.
  */
 export function resolveGeminiKey(): { key: string; origin: KeyOrigin } {
   const env = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
   if (env) return { key: env, origin: 'env' };
-
-  const bundled = pickBundledKey();
-  if (bundled) return { key: bundled, origin: 'pool' };
-
   return { key: '', origin: 'none' };
 }

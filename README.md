@@ -92,11 +92,11 @@ screen asks for a Google API key is a tool most people never dictate with. `GEMI
 a developer's `.env` still bypasses the server entirely, so working on the app doesn't spend
 real users' quota — a packaged build has no environment to read it from.
 
-**The bundled pool is on its way out.** `resources/gemini-keys.json` still ships as a fallback
-for builds made before a backend was configured, and the release workflow writes it from the
-`GEMINI_KEYS` secret via [scripts/write-keys.mjs](scripts/write-keys.mjs). Once the proxy is
-proven, Phase 5 of the setup doc deletes all of it — at which point no Gemini key exists
-anywhere in the installer.
+**No Gemini key exists anywhere in the installer.** The app used to ship a pool of free-tier
+keys as `resources/gemini-keys.json`; Phase 5 of the setup doc deleted it, because a key
+inside an installer is extractable by anyone who downloads it — a paywall bypass, once the
+proxy was live. The only Gemini keys are the server's, set with
+`supabase secrets set GEMINI_API_KEYS=...`.
 
 ## Developing
 
@@ -114,7 +114,6 @@ anything except the account and billing flows:
 
 ```
 GEMINI_API_KEY=...              # or GOOGLE_API_KEY — both are read
-WHISPER_UZ_BUNDLED_KEYS=...     # optional: exercise the shipped key pool
 WHISPER_UZ_GEMINI_MODEL=...     # optional: try a model without cutting a release
 WHISPER_UZ_GEMINI_REALTIME=1    # optional: take the Live socket instead of batch
 SUPABASE_URL=...                # optional: point at a staging project
@@ -188,7 +187,6 @@ MB and is the obvious next optimisation.
 | [src/main/audio.ts](src/main/audio.ts) | ffmpeg capture, device enumeration, RMS, WAV wrapping |
 | [src/main/stt/](src/main/stt/) | The proxy adapter, the direct Gemini batch and Live adapters, the prompt, the mock |
 | [src/main/auth.ts](src/main/auth.ts) | Google sign-in and the encrypted Supabase session |
-| [src/main/keys.ts](src/main/keys.ts) | The bundled key pool and its cooldowns — pre-Supabase, on its way out |
 | [supabase/](supabase/) | The schema and the three Edge Functions: `transcribe`, `checkout`, `payme` |
 | [src/main/inject.ts](src/main/inject.ts) | The clipboard save → paste → restore dance |
 | [src/main/overlay.ts](src/main/overlay.ts) | The floating pill that must never steal focus |

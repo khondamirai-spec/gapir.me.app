@@ -6,11 +6,11 @@ already written; this is the part only you can do.
 Work through it in order. Each phase leaves the app in a working state, so you can stop at the
 end of any of them.
 
-> **Where the app stands now (August 2026):** Phase 1 is done — `src/main/supabase-config.ts`
-> carries the real project URL and anon key, the migrations are applied, and all three Edge
+> **Where the app stands now (August 2026):** Phases 1–5 are done — `src/main/supabase-config.ts`
+> carries the real project URL and anon key, the migrations are applied, all three Edge
 > Functions are deployed, so `isConfigured()` is true and every build routes dictation through
-> the server. (Before that, the constants shipped empty and dictation fell back to the old
-> bundled key pool — which is still the behaviour of any build made from an older checkout.)
+> the server — and the old bundled key pool is deleted (Phase 5), so no Gemini key exists
+> anywhere in the installer.
 
 ---
 
@@ -221,7 +221,7 @@ Finally, make one real payment with a real card and confirm `profiles.plan` flip
 
 ---
 
-## Phase 5 — Retire the bundled keys
+## Phase 5 — Retire the bundled keys ✅ (done, August 2026)
 
 Only once Phase 3 has been proven in a **packaged** build, because until then the key pool is
 what keeps older installs dictating.
