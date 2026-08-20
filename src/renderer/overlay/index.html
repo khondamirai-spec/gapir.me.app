@@ -112,7 +112,11 @@
        *                  line — glow above the pill, an abrupt cut below. Main gives the
        *                  window the pixels back by sitting flush with the work area
        *                  (BOTTOM_GAP is 0), so the pill still floats just above the taskbar.
-       *   left 16px    — PAD_SIDE on a side dock, where the same sum is sideways.
+       *   left 8px     — PAD_SIDE on a side dock. Deliberately half of PAD_BOTTOM rather
+       *                  than equal to it: the shadow those pixels buy room for is cast
+       *                  downward (`0 8px 32px`), so a pill lying against a *side* edge
+       *                  needs far less of it — and at the 16px this used to be, the pill
+       *                  read as resting near the edge rather than fixed to it.
        *
        * `transform-origin` is the bottom edge rather than the centre, and that is what makes
        * the side docks work at all: the pill grows *upward* from its anchored bottom edge in
@@ -156,7 +160,7 @@
          The anchor itself needs nothing new: `transform-origin` above is already the pill's
          bottom edge, so the rotation turns the whole layout a quarter turn about it and the
          pill's bottom face — the one PAD_BOTTOM holds off the taskbar — becomes the face
-         held PAD_SIDE off the screen edge. `left` therefore reads 16px here in exactly the
+         held PAD_SIDE off the screen edge. `left` therefore reads 8px here in exactly the
          sense it reads 24px in `bottom` above.
 
          `bottom: 50%` rather than a fixed offset because a side dock is the taller window
@@ -168,12 +172,12 @@
       }
 
       body.dock-left #hit {
-        left: 16px;
+        left: 8px;
         transform: translate(-50%, 0) rotate(90deg);
       }
 
       body.dock-right #hit {
-        left: calc(100% - 16px);
+        left: calc(100% - 8px);
         transform: translate(-50%, 0) rotate(-90deg);
       }
 
@@ -183,7 +187,9 @@
          window keeps the full WIDTH it does not otherwise need. hitRect() in
          src/main/overlay.ts has the matching special case. */
       body.dock-left #hit:has(#pill.error),
-      body.dock-right #hit:has(#pill.error) {
+      body.dock-right #hit:has(#pill.error),
+      body.dock-left #hit:has(#pill.prompt),
+      body.dock-right #hit:has(#pill.prompt) {
         left: 50%;
         transform: translate(-50%, 50%);
       }
@@ -237,7 +243,7 @@
       /* Very slowly, very slightly, the resting bar breathes. It is the only thing on screen
          that says the app is alive rather than merely drawn — the reference has nothing of
          the kind, but the reference is not something you install and then wonder about. */
-      #pill:not(.active):not(.error):not(.done):not(.hover) {
+      #pill:not(.active):not(.error):not(.done):not(.prompt):not(.hover) {
         animation: breathe 4.2s ease-in-out infinite;
       }
 
@@ -272,7 +278,7 @@
          The tooltip is absolutely positioned above the pill rather than laid out beside it,
          so summoning it never shifts the pill itself — a mark that hops sideways when
          pointed at reads as flinching. */
-      #pill.hover:not(.active):not(.error):not(.done) {
+      #pill.hover:not(.active):not(.error):not(.done):not(.prompt) {
         width: 64px;
         height: 30px;
         opacity: 1;
@@ -325,7 +331,7 @@
       /* `:has()` rather than the sibling combinator this used to be — the tooltip is no
          longer next to the pill in the DOM, and the condition is still exactly "the pill is
          wearing its hover capsule". */
-      body:has(#pill.hover:not(.active):not(.error):not(.done)) #tooltip {
+      body:has(#pill.hover:not(.active):not(.error):not(.done):not(.prompt)) #tooltip {
         display: block;
       }
 
@@ -336,7 +342,7 @@
         }
       }
 
-      /* Beside the pill at a side dock, and level with it: PAD_SIDE (16) + the hover
+      /* Beside the pill at a side dock, and level with it: PAD_SIDE (8) + the hover
          capsule's 30px thickness + a 12px gap clears the pill exactly, and the window's
          vertical middle is the line the pill itself sits on. Still horizontal, because the
          window is what these resolve against now — see the note on #tooltip above.
@@ -350,14 +356,14 @@
       }
 
       body.dock-left #tooltip {
-        left: 58px;
+        left: 50px;
         transform: translateY(-50%);
         animation-name: tip-in-left;
       }
 
       body.dock-right #tooltip {
         left: auto;
-        right: 58px;
+        right: 50px;
         transform: translateY(-50%);
         animation-name: tip-in-right;
       }
@@ -403,7 +409,7 @@
       /* Pinned to the hover capsule while carried — but only when the pill is at rest.
          Dragging a recording pill has to leave the recording pill alone, which is what the
          :not() chain buys (and what the specificity of the .hover rule above demands). */
-      body.dragging #pill:not(.active):not(.error):not(.done) {
+      body.dragging #pill:not(.active):not(.error):not(.done):not(.prompt) {
         width: 64px;
         height: 30px;
         opacity: 1;
@@ -478,6 +484,59 @@
         border-color: rgba(224, 112, 90, 0.45);
       }
 
+      /* ---- The offer ----
+         Not an error, and it must not look like one. "You are signed out" used to be a red
+         sentence on the pill, which is a notification telling somebody to go and find a
+         window with a button in it — so it became the button. Ink rather than the error's
+         red border, one line, and a cursor that says it can be pressed.
+
+         It shares the ERROR state with the real errors (see promptSignIn in
+         src/main/state.ts), so these rules come *after* `#pill.error` and the renderer
+         never sets both classes at once.
+
+         `.prompt` is also named in the `:not()` chain of every resting-pill rule above, and
+         that is not tidiness: those chains outrank a plain `#pill.prompt`, so without the
+         exclusion, hovering would collapse this button into the 64px idle capsule at exactly
+         the moment somebody was reaching to click it. */
+      #pill.prompt {
+        justify-content: center;
+        gap: 10px;
+        width: 232px;
+        height: 44px;
+        padding: 0 18px;
+        opacity: 1;
+        background: var(--ink-900);
+        border-color: rgba(255, 238, 224, 0.18);
+        box-shadow: 0 8px 32px rgba(89, 2, 34, 0.42);
+        cursor: pointer;
+      }
+
+      /* Waiting for a browser somewhere else on the machine: same capsule, no button
+         affordance, because there is nothing left to press. */
+      #pill.prompt.waiting {
+        width: 216px;
+        cursor: default;
+      }
+
+      #pill.prompt #label {
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      /* Google's mark, at Google's colours — the one place in this app where a brand other
+         than ours is drawn, and their terms require it be drawn as theirs. */
+      #gmark {
+        display: none;
+        flex-shrink: 0;
+        width: 17px;
+        height: 17px;
+      }
+
+      #pill.prompt:not(.waiting) #gmark {
+        display: block;
+      }
+
       /* ---- The mark ----
          The gapir.me lips, painted via -webkit-mask-image from the real artwork (see the
          #logo rule below): the artwork is burgundy and the pill is near-black, so masking
@@ -506,7 +565,7 @@
         -webkit-mask-size: contain;
       }
 
-      #pill.hover:not(.active):not(.error):not(.done) #logo,
+      #pill.hover:not(.active):not(.error):not(.done):not(.prompt) #logo,
       #pill.error #logo {
         display: block;
       }
@@ -633,6 +692,24 @@
              resting hairline (or crowding the mark on hover) is what that frame looked
              like. The resting pill has no meter, so neither does the markup. -->
         <div id="bars" class="hidden"></div>
+        <svg id="gmark" viewBox="0 0 48 48" aria-hidden="true">
+          <path
+            fill="#4285F4"
+            d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"
+          />
+          <path
+            fill="#34A853"
+            d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"
+          />
+          <path
+            fill="#FBBC05"
+            d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"
+          />
+          <path
+            fill="#EA4335"
+            d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"
+          />
+        </svg>
         <div id="label"></div>
         <svg id="spinner" class="hidden" viewBox="0 0 16 16" aria-hidden="true"></svg>
         <svg id="check" class="hidden" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -648,7 +725,9 @@
     </div>
     <!-- Outside #hit, not inside it: #hit is rotated at a side dock and the hint has to stay
          horizontal, so it is anchored to the window instead. See the #tooltip rules. -->
-    <div id="tooltip">Gapiring <b>Ctrl + Shift</b></div>
+    <!-- The chord is filled in by the renderer from the user's own setting; the default
+         here is only what is drawn in the frame before main's first push arrives. -->
+    <div id="tooltip">Gapiring <b id="tipKeys">Ctrl + Shift</b></div>
     <script type="module" src="./overlay.ts"></script>
   </body>
 </html>

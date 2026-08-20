@@ -26,14 +26,39 @@ export const SUPABASE_URL = (process.env.SUPABASE_URL || DEFAULT_URL).replace(/\
 export const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || DEFAULT_ANON_KEY;
 
 /**
- * The custom scheme the OAuth redirect comes back on.
+ * The custom scheme the sign-in comes back on.
  *
- * Google never sees this: it redirects to Supabase's own https callback, and Supabase
- * forwards to here. It must also be listed in the project's redirect allowlist, or Supabase
- * refuses the forward and the user is left staring at a browser tab.
+ * Google never sees it: Google redirects to Supabase's own https callback, Supabase
+ * redirects to the web page below, and that page hands the code to this app through the
+ * scheme. The installer registers the handler (see `protocols` in electron-builder.yml);
+ * `completeSignIn()` accepts URLs on this scheme and no other.
  */
 export const AUTH_PROTOCOL = 'gapirme';
-export const AUTH_REDIRECT = `${AUTH_PROTOCOL}://auth-callback`;
+
+/** What the browser opens to reach us. */
+export const APP_CALLBACK = `${AUTH_PROTOCOL}://auth-callback`;
+
+/**
+ * Where Supabase sends the browser when the consent is done.
+ *
+ * A page on our own site rather than the `gapirme://` link directly, and the extra hop is
+ * the difference between a sign-in that *looks* finished and one that leaves the user
+ * staring at a blank tab with a permission dialog over it. The page says "you are signed
+ * in, you can close this", and carries a button that opens the app — which matters, because
+ * a browser treats a deliberate click on a custom scheme far more kindly than a navigation
+ * fired from a script. Its source is in the website repo, at src/app/auth/callback.
+ *
+ * **This address must be in the project's redirect allowlist** (Authentication → URL
+ * Configuration → Redirect URLs, and `additional_redirect_urls` in supabase/config.toml).
+ * If it is not, Supabase quietly falls back to the project's `site_url` — which is
+ * `gapirme://auth-callback`, so sign-in still completes, just without the page. That is a
+ * soft failure by luck rather than by design; list the URL.
+ *
+ * www, not the apex: gapir.me answers with a 308 to www.gapir.me, and a redirect chain is
+ * one more thing that can drop a query string.
+ */
+export const AUTH_REDIRECT =
+  process.env.WHISPER_UZ_AUTH_REDIRECT || 'https://www.gapir.me/auth/callback';
 
 export const TRANSCRIBE_URL = `${SUPABASE_URL}/functions/v1/transcribe`;
 

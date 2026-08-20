@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { app } from 'electron';
+import { sanitizeHotkeys, type HotkeySettings } from '@shared/hotkeys';
 import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_SETTINGS,
@@ -23,6 +24,7 @@ import {
 interface StoreShape {
   language: Settings['language'];
   deviceId: string;
+  hotkeys: HotkeySettings;
   minRecordingMs: number;
   launchAtLogin: boolean;
   showIdlePill: boolean;
@@ -98,6 +100,7 @@ export function getSettings(): Settings {
   return {
     language: store.get('language'),
     deviceId: store.get('deviceId'),
+    hotkeys: sanitizeHotkeys(store.get('hotkeys')),
     minRecordingMs: store.get('minRecordingMs'),
     launchAtLogin: store.get('launchAtLogin'),
     showIdlePill: store.get('showIdlePill'),
@@ -114,6 +117,10 @@ export function getSettings(): Settings {
 export function setSettings(patch: Partial<Settings>): void {
   if (patch.language !== undefined) store.set('language', patch.language);
   if (patch.deviceId !== undefined) store.set('deviceId', patch.deviceId);
+  // Sanitised on the way in as well as on the way out. A renderer is not a trusted source
+  // of a chord — and a chord that reached the hook malformed would be one the user could
+  // neither trigger nor see well enough to fix.
+  if (patch.hotkeys !== undefined) store.set('hotkeys', sanitizeHotkeys(patch.hotkeys));
   if (patch.minRecordingMs !== undefined)
     store.set('minRecordingMs', Math.min(5_000, Math.max(0, Math.round(patch.minRecordingMs) || 0)));
   if (patch.showIdlePill !== undefined) store.set('showIdlePill', patch.showIdlePill);

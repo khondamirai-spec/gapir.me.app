@@ -1983,7 +1983,16 @@
         overflow-wrap: anywhere;
       }
 
-      /* ------------------------------------------------------------ welcome */
+      /* ------------------------------------------------------------ welcome
+         A wizard, one step to a screen, rather than the single scrolling page of four
+         numbered blocks this used to be. The difference is not decoration: setup has a step
+         that *cannot* be skipped (sign-in — the app cannot transcribe a word without an
+         account), and a page you can scroll past has no way to say so. One step at a time
+         means the Davom etish button is the only way forward, and it can refuse.
+
+         The shape follows the reference flow: a rail across the top so you can see how much
+         is left, one card per question, and the answer to each is a real control rather than
+         a description of one. */
 
       #welcome {
         position: fixed;
@@ -1996,9 +2005,84 @@
       }
 
       #welcomeDrag {
-        height: 44px;
+        height: 40px;
         flex-shrink: 0;
         -webkit-app-region: drag;
+      }
+
+      /* ---- the rail ----
+         Five words, and where you are among them. Steps already passed are buttons: going
+         back to change the microphone must not mean starting over. */
+      #wRail {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 2px;
+        flex-shrink: 0;
+        padding: 0 24px 16px;
+      }
+
+      .w-rail-step {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 5px 9px;
+        border: 0;
+        border-radius: 999px;
+        background: none;
+        color: var(--ink-4);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        cursor: default;
+      }
+
+      .w-rail-step i {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 19px;
+        height: 19px;
+        border: 1.4px solid currentColor;
+        border-radius: 50%;
+        font-size: 10.5px;
+        font-style: normal;
+        font-weight: 700;
+      }
+
+      .w-rail-step.done {
+        color: var(--ink-3);
+        cursor: pointer;
+      }
+
+      .w-rail-step.done:hover {
+        background: var(--hover);
+      }
+
+      .w-rail-step.done i {
+        background: var(--ink-3);
+        border-color: var(--ink-3);
+        color: var(--paper);
+      }
+
+      .w-rail-step.on {
+        color: var(--accent);
+      }
+
+      .w-rail-step.on i {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      .w-rail-sep {
+        width: 16px;
+        height: 1px;
+        flex-shrink: 0;
+        background: var(--line-strong);
       }
 
       #welcomeBody {
@@ -2007,21 +2091,30 @@
         overflow-y: auto;
         display: flex;
         justify-content: center;
-        padding: 8px 24px 24px;
+        padding: 4px 24px 24px;
       }
 
       #welcomeInner {
         width: 100%;
-        max-width: 520px;
+        max-width: 560px;
+      }
+
+      .w-step {
+        display: none;
+      }
+
+      .w-step.on {
+        display: block;
+        animation: rowIn 380ms var(--ease) both;
       }
 
       /* No tile behind it: the mark is drawn to be read as a line on paper, and a box around
-         it at this size adds an edge the artwork doesn't have. */
+         it at this size adds an edge the artwork does not have. */
       .w-mark {
         display: block;
-        width: 132px;
+        width: 118px;
         height: auto;
-        margin-bottom: 22px;
+        margin-bottom: 18px;
         animation: markIn 500ms var(--ease) both;
       }
 
@@ -2032,70 +2125,250 @@
         }
       }
 
-      #welcomeInner h1 {
+      .w-step h1 {
         font-size: 27px;
       }
 
-      #welcomeInner > p {
-        margin: 8px 0 26px;
+      .w-step h2 {
+        font-size: 22px;
+      }
+
+      .w-step .lead {
+        margin: 8px 0 22px;
         font-size: 14px;
         color: var(--ink-2);
         line-height: 1.6;
       }
 
-      .step {
+      .w-card {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--card);
+      }
+
+      .w-card h3 {
+        margin-bottom: 14px;
+        font-size: 14.5px;
+        font-weight: 600;
+      }
+
+      .w-card .note {
+        margin-top: 12px;
+        font-size: 12.5px;
+        color: var(--ink-3);
+        line-height: 1.5;
+      }
+
+      .w-actions {
         display: flex;
-        gap: 13px;
-        margin-bottom: 22px;
-        animation: rowIn 420ms var(--ease) both;
+        align-items: center;
+        gap: 10px;
+        margin-top: 16px;
       }
 
-      .step:nth-child(2) {
-        animation-delay: 60ms;
-      }
-      .step:nth-child(3) {
-        animation-delay: 120ms;
-      }
-      .step:nth-child(4) {
-        animation-delay: 180ms;
+      .w-actions .grow {
+        flex: 1;
       }
 
-      .step-num {
+      /* ---- signed in ----
+         The one step with a state worth drawing rather than describing. */
+      .w-signed {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 13px 15px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        background: var(--card-2);
+      }
+
+      .w-signed .tick {
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        width: 25px;
-        height: 25px;
+        width: 26px;
+        height: 26px;
         border-radius: 50%;
-        /* Outlined, not filled. Four ink discs down the left of the welcome
-           screen would be four filled blocks competing with each other and with
-           the one button that actually finishes setup. */
-        border: 1.5px solid var(--accent);
-        color: var(--accent);
-        font-size: 12.5px;
-        font-weight: 700;
+        background: var(--ok);
+        color: var(--paper);
       }
 
-      .step-body {
-        flex: 1;
-        min-width: 0;
-      }
-
-      .step-body h3 {
-        font-size: 14.5px;
+      .w-signed b {
+        display: block;
+        font-size: 13.5px;
         font-weight: 600;
-        margin-bottom: 4px;
       }
 
-      .step-body p {
-        font-size: 13px;
+      .w-signed span {
+        font-size: 12.5px;
+        color: var(--ink-3);
+        overflow-wrap: anywhere;
+      }
+
+      /* ---- the microphone list ----
+         Auto-detect first and selected by default, which is the honest default: DirectShow
+         has no "default device" alias, so it means "whichever the system lists first" — and
+         that is right far more often than asking someone to recognise their own hardware
+         from a list of alternative names. */
+      .w-devices {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 244px;
+        overflow-y: auto;
+      }
+
+      .w-device {
+        display: block;
+        width: 100%;
+        padding: 11px 13px;
+        border: 1.5px solid transparent;
+        border-radius: var(--radius-sm);
+        background: var(--card-2);
+        color: var(--ink);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .w-device:hover {
+        border-color: var(--line-strong);
+      }
+
+      .w-device.on {
+        border-color: var(--accent);
+        background: var(--paper);
+      }
+
+      .w-device b {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 600;
+      }
+
+      .w-device span {
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+
+      /* ---- language ---- */
+      .w-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .w-chip {
+        padding: 9px 18px;
+        border: 1.5px solid var(--line-strong);
+        border-radius: 999px;
+        background: var(--card-2);
+        color: var(--ink);
+        font: inherit;
+        font-size: 13.5px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .w-chip.on {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      /* ---- keycaps ----
+         Drawn as keys, and lit from the *global hook* rather than from this window's own
+         keydown events (see IPC.hotkeyWatch). That is the whole point of the step: a window
+         that has focus always sees its own key events, so testing those would answer yes on
+         exactly the machines where the hook is broken. */
+      .w-keys {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        min-height: 72px;
+      }
+
+      .kbd-cap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 54px;
+        height: 52px;
+        padding: 0 14px;
+        border: 1.5px solid var(--line-strong);
+        border-radius: 10px;
+        /* A key sticks up: one solid line under it, no blur. A blurred shadow here reads as
+           a floating card, which is the one thing a key on a keyboard is not. */
+        box-shadow: 0 2px 0 var(--line-strong);
+        background: var(--paper);
         color: var(--ink-2);
-        line-height: 1.55;
+        font-size: 13px;
+        font-weight: 600;
+        transition:
+          background-color 90ms ease,
+          color 90ms ease,
+          transform 90ms ease,
+          box-shadow 90ms ease;
       }
 
-      .step-body .field {
-        margin: 12px 0 0;
+      .kbd-cap.down {
+        transform: translateY(2px);
+        box-shadow: none;
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      .kbd-plus {
+        color: var(--ink-4);
+        font-size: 15px;
+      }
+
+      /* ---- practice ---- */
+      #wTry {
+        width: 100%;
+        min-height: 96px;
+        padding: 12px 13px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        background: var(--paper);
+        color: var(--ink);
+        font: inherit;
+        font-size: 14px;
+        resize: vertical;
+      }
+
+      #wTry:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+
+      /* ---- the summary on the last step ---- */
+      .w-summary {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .w-summary div {
+        display: flex;
+        gap: 12px;
+        font-size: 13px;
+      }
+
+      .w-summary dt {
+        flex-shrink: 0;
+        width: 108px;
+        color: var(--ink-3);
+      }
+
+      .w-summary dd {
+        font-weight: 600;
+        overflow-wrap: anywhere;
       }
 
       #welcomeFoot {
@@ -2105,6 +2378,118 @@
         flex-shrink: 0;
         padding: 14px 24px;
         border-top: 1px solid var(--line);
+      }
+
+      #welcomeFoot .grow {
+        flex: 1;
+      }
+
+      /* ------------------------------------------------------- shortcut editor
+         Shared by the welcome flow and Sozlamalar, because there is exactly one answer to
+         "what are my shortcuts" and two screens that ask it. */
+
+      #hotkeyModal {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .hk-scrim {
+        position: absolute;
+        inset: 0;
+        background: rgba(58, 1, 22, 0.26);
+      }
+
+      .hk-panel {
+        position: relative;
+        width: min(560px, calc(100vw - 48px));
+        max-height: calc(100vh - 80px);
+        overflow-y: auto;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--paper);
+        box-shadow: 0 24px 60px rgba(58, 1, 22, 0.22);
+      }
+
+      .hk-panel h2 {
+        font-size: 20px;
+      }
+
+      .hk-panel > p {
+        margin: 6px 0 18px;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+
+      .hk-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 12px;
+        padding: 14px;
+        border-radius: var(--radius-sm);
+        background: var(--card);
+      }
+
+      .hk-row .hk-text {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .hk-row b {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 600;
+      }
+
+      .hk-row span {
+        font-size: 12.5px;
+        color: var(--ink-3);
+        line-height: 1.5;
+      }
+
+      .hk-keys {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        min-width: 168px;
+      }
+
+      .hk-cap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 38px;
+        height: 32px;
+        padding: 0 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--paper);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .hk-empty {
+        font-size: 12.5px;
+        color: var(--ink-4);
+      }
+
+      /* Recording a new chord: the row says so, loudly, because every key on the keyboard
+         means something else for as long as it lasts. */
+      .hk-row.recording {
+        outline: 1.5px solid var(--accent);
+      }
+
+      .hk-row.recording .hk-cap {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
       }
 
       /* ------------------------------------------------------------- toast */
@@ -2212,7 +2597,7 @@
           <div class="view-head">
             <h1 id="greeting">Xush kelibsiz</h1>
             <p>
-              Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Shift</kbd> ni bosib turib gapiring —
+              Xohlagan dasturda <span data-hotkey></span> ni bosib turib gapiring —
               qo‘yib yuborganingizda matn kursor turgan joyga yoziladi.
             </p>
           </div>
@@ -2242,7 +2627,7 @@
                    window to read their history is exactly who has forgotten it. -->
               <div class="card pad hotkey-card">
                 <h4>Diktovka tugmalari</h4>
-                <p><kbd>Ctrl</kbd> + <kbd>Shift</kbd></p>
+                <p data-hotkey></p>
                 <span>Bosib turing va gapiring</span>
                 <p><kbd>Esc</kbd></p>
                 <span>Bekor qilish</span>
@@ -2454,7 +2839,7 @@
             <h1>Qaydlar</h1>
             <p>
               Diktovka qilingan matnni shu yerga aytib qo‘ying. Bosing va
-              <kbd>Ctrl</kbd> + <kbd>Shift</kbd> — o‘zgarishlar avtomatik saqlanadi.
+              <span data-hotkey></span> — o‘zgarishlar avtomatik saqlanadi.
             </p>
           </div>
           <textarea id="scratchpadText" placeholder="Bu yerga gapiring yoki yozing…"></textarea>
@@ -2540,7 +2925,7 @@
               <div class="help-item">
                 <b>Qanday ishlaydi</b>
                 <p>
-                  Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Shift</kbd> ni bosib turing,
+                  Xohlagan dasturda <span data-hotkey></span> ni bosib turing,
                   gapiring, qo‘yib yuboring. Bekor qilish uchun — <kbd>Esc</kbd>. Matn kursor turgan
                   joyga qo‘yiladi va tarixga yoziladi.
                 </p>
@@ -2554,11 +2939,11 @@
                 </p>
               </div>
               <div class="help-item">
-                <b>«Kirish kerak» deb yozdi</b>
+                <b>Belgida «Google bilan kirish» chiqdi</b>
                 <p>
                   Diktovka ilovaning serveri orqali ishlaydi, shuning uchun hisobga kirish kerak.
-                  «Hisob» bo‘limiga o‘tib, Google bilan kiring — bir marta kirsangiz, keyin
-                  o‘zi eslab qoladi.
+                  Belgidagi tugmani bosing yoki «Hisob» bo‘limiga o‘ting — brauzer ochiladi,
+                  kirasiz va o‘zi ilovaga qaytaradi. Bir marta kirsangiz, keyin o‘zi eslab qoladi.
                 </p>
               </div>
               <div class="help-item">
@@ -2592,31 +2977,41 @@
       </main>
     </div>
 
-    <!-- ============================== welcome ============================== -->
+    <!-- ============================== welcome ==============================
+         Five steps, one to a screen, in the order the app needs them: an account (without
+         which nothing can be transcribed at all), a microphone, a language, the keys, and
+         one real dictation to prove the four of them work together.
+
+         Every step's markup is here and only one carries `.on`; app.ts moves the class. The
+         steps are numbered from 0 in `data-step` so the code can index the rail with the
+         same number. -->
     <section id="welcome" class="hidden">
       <div id="welcomeDrag"></div>
+
+      <nav id="wRail" aria-label="Sozlash bosqichlari"></nav>
+
       <div id="welcomeBody">
         <div id="welcomeInner">
-          <!-- The welcome screen is the one place with room to show the mark properly, so it
-               gets it at full size and unboxed — on cream, which is where it is meant to sit. -->
-          <img class="w-mark" src="../assets/logo.png" alt="gapir me" />
-          <h1>gapir me ga xush kelibsiz</h1>
-          <p>
-            To‘rt qadam — keyin xohlagan dasturda gapirasiz, matn o‘zi yoziladi. Diktovka
-            ilovaning serveri orqali ishlaydi, shuning uchun avval hisobga kirasiz.
-          </p>
+          <!-- ------------------------------ 0. kirish ------------------------------ -->
+          <div class="w-step" data-step="0">
+            <!-- The welcome screen is the one place with room to show the mark properly, so
+                 it gets it at full size and unboxed — on cream, where it is meant to sit. -->
+            <img class="w-mark" src="../assets/logo.png" alt="gapir me" />
+            <h1>gapir me ga xush kelibsiz</h1>
+            <p class="lead">
+              Besh qadam — keyin xohlagan dasturda gapirasiz, matn o‘zi yoziladi. Diktovka
+              ilovaning serveri orqali ishlaydi, shuning uchun avval hisobga kirasiz.
+            </p>
 
-          <!-- Sign-in is step one because it is the only step the app cannot work without.
-               Name and microphone both have workable defaults; this does not. -->
-          <div class="step">
-            <div class="step-num">1</div>
-            <div class="step-body">
-              <h3>Hisobga kirish</h3>
-              <p>
+            <div class="w-card">
+              <h3>Google bilan ro‘yxatdan o‘tish</h3>
+              <p class="note" style="margin-top: 0">
                 Brauzer ochiladi. Parolni shu yerga emas, Google’ning o‘z sahifasiga
-                kiritasiz — ilova uni ko‘rmaydi.
+                kiritasiz — ilova uni ko‘rmaydi. Kirgandan so‘ng brauzer sizni shu ilovaga
+                qaytaradi. Karta so‘ralmaydi.
               </p>
-              <div class="field">
+
+              <div class="w-actions" id="wSignInRow">
                 <button class="btn" id="wSignIn">
                   <svg class="g-mark" viewBox="0 0 48 48" aria-hidden="true">
                     <path
@@ -2638,60 +3033,194 @@
                   </svg>
                   Google bilan kirish
                 </button>
-                <p class="msg" id="wAuthMsg"></p>
+                <span class="grow"></span>
+                <button class="btn ghost small hidden" id="wSignInRetry">Qaytadan</button>
               </div>
-            </div>
-          </div>
 
-          <div class="step">
-            <div class="step-num">2</div>
-            <div class="step-body">
-              <h3>Ismingiz</h3>
-              <p>Faqat salomlashuv uchun. Bo‘sh qoldirsangiz ham bo‘ladi.</p>
-              <div class="field">
-                <input id="wName" type="text" placeholder="Ismingiz" autocomplete="off" />
-              </div>
-            </div>
-          </div>
-
-          <div class="step">
-            <div class="step-num">3</div>
-            <div class="step-body">
-              <h3>Mikrofon</h3>
-              <p>Gapirib ko‘ring — chiziqlar qimirlasa, mikrofon to‘g‘ri tanlangan.</p>
-              <div class="field">
-                <div class="with-button">
-                  <select id="wDevice">
-                    <option value="">Tizim standarti</option>
-                  </select>
-                  <button class="btn ghost" id="wMicTest">Tekshirish</button>
+              <!-- Replaces the button once the deep link comes back. -->
+              <div class="w-signed hidden" id="wSignedIn">
+                <span class="tick">
+                  <svg
+                    viewBox="0 0 16 16"
+                    width="15"
+                    height="15"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 8.4l3.2 3.2L13 5" />
+                  </svg>
+                </span>
+                <div>
+                  <b id="wSignedName">Kirdingiz</b>
+                  <span id="wSignedEmail"></span>
                 </div>
-                <div class="meter" id="wMeter"></div>
-                <p class="msg" id="wMicMsg"></p>
+              </div>
+
+              <p class="msg" id="wAuthMsg"></p>
+            </div>
+          </div>
+
+          <!-- ---------------------------- 1. mikrofon ------------------------------ -->
+          <div class="w-step" data-step="1">
+            <h2>Mikrofonni tekshiramiz</h2>
+            <p class="lead">
+              Noutbukning o‘z mikrofoni yoki simli naushnik eng ishonchli. Bluetooth
+              qurilmalar ba’zan uzilib qoladi.
+            </p>
+
+            <div class="w-card">
+              <h3>Gapiring — chiziqlar qimirlayaptimi?</h3>
+              <div class="meter" id="wMeter"></div>
+              <p class="msg" id="wMicMsg"></p>
+
+              <div class="w-actions">
+                <span class="grow"></span>
+                <button class="btn ghost" id="wMicChange">Mikrofonni almashtirish</button>
+                <button class="btn" id="wMicYes">Ha, qimirlayapti</button>
+              </div>
+            </div>
+
+            <!-- The picker, hidden until the answer is "no". Auto-detect is a row like any
+                 other so that choosing it is the same gesture as choosing a device. -->
+            <div class="w-card hidden" id="wDevicePicker" style="margin-top: 14px">
+              <h3>Qaysi mikrofon?</h3>
+              <div class="w-devices" id="wDevices"></div>
+              <p class="note">
+                Ro‘yxatda yo‘qmi? Qurilmani ulang va oynani yopib qaytadan oching.
+              </p>
+            </div>
+          </div>
+
+          <!-- ------------------------------- 2. til -------------------------------- -->
+          <div class="w-step" data-step="2">
+            <h2>Qaysi tilda gapirasiz?</h2>
+            <p class="lead">
+              Diktovka shu tilda eshitiladi va shu tilda yoziladi. Keyinroq Sozlamalardan
+              o‘zgartirasiz.
+            </p>
+
+            <div class="w-card">
+              <h3>Diktovka tili</h3>
+              <div class="w-chips" id="wLangs"></div>
+              <p class="note">
+                Hozircha uchta til: o‘zbekcha, ruscha va inglizcha. Aralash gapirsangiz —
+                ko‘proq gapirgan tilingizni tanlang.
+              </p>
+            </div>
+          </div>
+
+          <!-- ----------------------------- 3. tugmalar ----------------------------- -->
+          <div class="w-step" data-step="3">
+            <h2>Tugmalarni sinab ko‘ring</h2>
+            <p class="lead" id="wKeysLead"></p>
+
+            <div class="w-card">
+              <h3>Ikkalasini birga bosing — tugmalar bo‘yaladimi?</h3>
+              <div class="w-keys" id="wKeys"></div>
+              <p class="msg" id="wKeysMsg"></p>
+
+              <div class="w-actions">
+                <button class="btn ghost" id="wEditKeys">Tugmalarni o‘zgartirish</button>
+                <span class="grow"></span>
+                <button class="btn ghost" id="wKeysNo">Yo‘q</button>
+                <button class="btn" id="wKeysYes">Ha</button>
               </div>
             </div>
           </div>
 
-          <div class="step">
-            <div class="step-num">4</div>
-            <div class="step-body">
-              <h3>Sinab ko‘ring</h3>
-              <p>
-                Quyidagi maydonni bosing, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> ni bosib turib
-                gapiring va qo‘yib yuboring.
+          <!-- ------------------------------ 4. sinov ------------------------------- -->
+          <div class="w-step" data-step="4">
+            <h2>Endi bir marta gapirib ko‘ring</h2>
+            <p class="lead" id="wTryLead"></p>
+
+            <div class="w-card">
+              <h3>Shu maydonni bosing va gapiring</h3>
+              <textarea id="wTry" placeholder="Matn shu yerda paydo bo‘ladi…"></textarea>
+              <p class="msg" id="wTryMsg"></p>
+              <p class="note">
+                Bitta yozuv 2 daqiqagacha. Fikringizdan qaytsangiz — <kbd>Esc</kbd>.
               </p>
-              <div class="field">
-                <textarea id="wTry" placeholder="Matn shu yerda paydo bo‘ladi…"></textarea>
-              </div>
+            </div>
+          </div>
+
+          <!-- ------------------------------ 5. tayyor ------------------------------ -->
+          <div class="w-step" data-step="5">
+            <h2>Tayyor</h2>
+            <p class="lead">
+              Ilova traydagi belgida va ekran chetidagi kichkina belgida yashaydi. Oynani
+              yopsangiz ham ishlayveradi.
+            </p>
+
+            <div class="w-card">
+              <h3>Ismingiz</h3>
+              <input id="wName" type="text" placeholder="Ismingiz" autocomplete="off" />
+              <p class="note">Faqat salomlashuv uchun. Bo‘sh qoldirsangiz ham bo‘ladi.</p>
+
+              <dl class="w-summary">
+                <div><dt>Hisob</dt><dd id="wSumAccount">—</dd></div>
+                <div><dt>Mikrofon</dt><dd id="wSumMic">—</dd></div>
+                <div><dt>Til</dt><dd id="wSumLang">—</dd></div>
+                <div><dt>Tugmalar</dt><dd id="wSumKeys">—</dd></div>
+              </dl>
             </div>
           </div>
         </div>
       </div>
+
       <footer id="welcomeFoot">
-        <button class="btn" id="wDone">Boshladik</button>
+        <button class="btn ghost" id="wBack">Orqaga</button>
         <span class="msg" id="wMsg" style="margin: 0"></span>
+        <span class="grow"></span>
+        <button class="btn" id="wNext">Davom etish</button>
       </footer>
     </section>
+
+    <!-- ========================== shortcut editor ==========================
+         Opened from the welcome flow and from Sozlamalar. Recording a chord reads DOM key
+         events rather than the global hook: this window has focus while the dialog is open,
+         and `KeyboardEvent.code` is the physical key, which is exactly what the hook will be
+         asked to match later. See src/shared/hotkeys.ts. -->
+    <div id="hotkeyModal" class="hidden" role="dialog" aria-modal="true" aria-label="Tugmalar">
+      <div class="hk-scrim" id="hkScrim"></div>
+      <div class="hk-panel">
+        <h2>Tugmalar</h2>
+        <p>Diktovkani qaysi tugmalar bilan boshlashni o‘zingiz tanlaysiz.</p>
+
+        <div class="hk-row" id="hkRowPush">
+          <div class="hk-text">
+            <b>Bosib turib gapirish</b>
+            <span>Bosib turing, gapiring, qo‘yib yuboring — matn yoziladi.</span>
+          </div>
+          <div class="hk-keys" id="hkKeysPush"></div>
+          <button class="icon-btn" id="hkEditPush" title="O‘zgartirish" aria-label="O‘zgartirish"></button>
+        </div>
+
+        <div class="hk-row" id="hkRowFree">
+          <div class="hk-text">
+            <b>Qo‘lsiz rejim</b>
+            <span>
+              Bir marta bosing — yozuv boshlanadi, yana bosing — tugaydi. Bo‘sh qoldirsangiz
+              ham bo‘ladi: ekran chetidagi belgini bosish ham xuddi shunday ishlaydi.
+            </span>
+          </div>
+          <div class="hk-keys" id="hkKeysFree"></div>
+          <button class="icon-btn" id="hkEditFree" title="O‘zgartirish" aria-label="O‘zgartirish"></button>
+          <button class="icon-btn" id="hkClearFree" title="O‘chirish" aria-label="O‘chirish"></button>
+        </div>
+
+        <p class="msg" id="hkMsg"></p>
+
+        <div class="w-actions">
+          <button class="btn ghost" id="hkReset">Standart holatga</button>
+          <span class="grow"></span>
+          <button class="btn" id="hkDone">Tayyor</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ============================== settings ==============================
          A modal over the window rather than a seventh pane, and that is the shape the
@@ -2811,7 +3340,10 @@
               <div class="row">
                 <div class="row-text">
                   <b>Diktovka tugmalari</b>
-                  <span><kbd>Ctrl</kbd> + <kbd>Shift</kbd> ni bosib turing va gapiring</span>
+                  <span><span data-hotkey></span> ni bosib turing va gapiring</span>
+                </div>
+                <div class="row-control">
+                  <button class="btn ghost small" id="openHotkeys">O‘zgartirish</button>
                 </div>
               </div>
 

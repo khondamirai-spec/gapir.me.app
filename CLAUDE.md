@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An Electron tray app for Windows: hold **Ctrl+Shift**, speak Uzbek, release, and the
+An Electron tray app for Windows: hold **Ctrl+Shift** (or whatever the user has bound —
+the chord is a setting now, see `Settings.hotkeys`), speak Uzbek, release, and the
 transcript is pasted into whatever app has focus. Clicking the overlay pill does the same
 hands-free — click to start, click again (or Esc) to stop. Speech goes to **Google Gemini**, not to a
 local Whisper model. Gemini is the only provider; the Aisha adapters are gone. The surviving
@@ -147,7 +148,7 @@ The leaves, so you can find a behaviour without opening all of them:
 | --- | --- |
 | `index.ts` | bootstrap: single-instance lock, tray, the app `BrowserWindow`, every `ipcMain` handler |
 | `audio.ts` | ffmpeg dshow capture, device enumeration, `rms`, `pcmToWav` |
-| `hotkey.ts` | the uiohook listener that emits `start` / `stop` / `cancel` |
+| `hotkey.ts` | the uiohook listener that emits `start` / `stop` / `cancel` / `toggle`, matching the user's chords |
 | `inject.ts` | clipboard save → paste → restore-on-a-timer |
 | `overlay.ts` | the pill window, its bounds, `applyVisibility()`, and the drag magnet |
 | `dock-guides.ts` | the landing slots drawn while the pill is dragged — owned by `overlay.ts`, not a peer |
@@ -156,7 +157,8 @@ The leaves, so you can find a behaviour without opening all of them:
 | `auth.ts` | the Supabase session: Google PKCE sign-in, the encrypted session store, `accessToken()`, the plan snapshot |
 | `billing.ts` | asks the server for a Payme checkout URL and opens it |
 | `supabase-config.ts` | project URL, anon key, the `gapirme://` scheme — all public by design |
-| `mic-test.ts` | the Settings level meter |
+| `mic-test.ts` | the Settings level meter, and the welcome flow's |
+| `app-paths.ts` | where `userData` is, and the one-time move out of the old folder — **imported first, on purpose** |
 | `updater.ts` | electron-updater, surfaced as `IPC.updateStatus` |
 | `logger.ts` | tees `console.*` into `userData\logs\main.log` — a packaged app has no console |
 
@@ -428,13 +430,21 @@ tray's *Loglar papkasi* item opens. That file is the whole of what you get back 
 whose dictation produced nothing, so treat it as the interface it is: anything worth
 diagnosing a remote failure with has to go through `console.*` to end up there.
 
-**Runtime state lives in `%APPDATA%\whisper-uz\`** — `settings.json` (all plaintext; there
+**Runtime state lives in `%APPDATA%\gapir me\`** — `settings.json` (all plaintext; there
 is no credential in it), `auth.json` (the Supabase session, **encrypted** with `safeStorage`
 — a refresh token is a credential, which is exactly why it is not in `settings.json`),
-`history.json`, and `logs\main.log`. Note the folder is named after `package.json`'s `name`,
-**in packaged builds too**: `productName` lives only in `electron-builder.yml`, which Electron
-never reads at runtime, so a packaged build and `npm run dev` share the same folder — and the
-same single-instance lock, which is why an installed copy must be quit before running dev.
+`history.json`, and `logs\main.log`.
+
+It was `%APPDATA%\whisper-uz\` until [app-paths.ts](src/main/app-paths.ts), because Electron
+names the folder after `package.json`'s `name` and this package is still called `whisper-uz` —
+renaming *that* would move the appId, the update feed and the installer's upgrade path with
+it. So the paths are named instead, and the old folder is moved across once on the first
+launch after the update. Two things follow. **That module must stay the first import in
+[index.ts](src/main/index.ts)**: ES modules evaluate in import order and `config.ts` builds
+its store while being imported, so moving the line down silently sends everything back to the
+old folder. And a packaged build and `npm run dev` still share the folder — and the same
+single-instance lock, which is why an installed copy must be quit before running dev.
+
 Read `settings.json` before trusting any
 claim about what the app is configured to do, including the user's. `conf` re-reads from disk
 on each `get`, so editing that file takes effect on the next hotkey press with no restart —
@@ -442,9 +452,21 @@ handy for bisecting a bad setting, and a reason not to assume a running app is s
 the values it started with. An empty `history.json` means **no dictation has ever
 succeeded**, which narrows the search a lot.
 
-**"Kirish kerak" is not a bug.** On a configured build a signed-out user cannot dictate, by
-design. If the Hisob pane shows someone signed in and the hotkey still says this, the session
-restored but the token did not — look for `safeStorage unavailable` in `main.log`.
+**The Google button on the pill is not a bug.** On a configured build a signed-out user
+cannot dictate, by design — and the pill says so by *being* the sign-in button rather than by
+printing "Kirish kerak", which is what it used to do. It arrives on the `ERROR` state with
+`prompt: 'sign-in'` (see `promptSignIn` in [state.ts](src/main/state.ts)) and is drawn in ink
+rather than red, because it is the step left before the app works, not a failure. If the Hisob
+pane shows someone signed in and the hotkey still offers this, the session restored but the
+token did not — look for `safeStorage unavailable` in `main.log`.
+
+**Sign-in goes through the website now.** Supabase redirects the browser to
+`https://www.gapir.me/auth/callback` (the page lives in the website repo, at
+`src/app/auth/callback`), which says "you are signed in, you can close this" and hands the
+code to the app through the `gapirme://` scheme. If that URL is missing from the project's
+redirect allowlist Supabase falls back to `site_url` — the deep link itself — so sign-in
+still completes and the only symptom is the missing page. See `AUTH_REDIRECT` in
+[supabase-config.ts](src/main/supabase-config.ts).
 
 **Two different messages mean "out of quota" and they are not the same failure.** `plan` (a
 402 from our server) is the *user's* daily allowance running out, and the answer is an offer
@@ -478,8 +500,12 @@ The README's **"Things that look wrong but aren't"** section documents the decis
 look like mistakes to anyone tidying up — read it before simplifying any of:
 
 - ffmpeg subprocess capture instead of `getUserMedia` ([audio.ts](src/main/audio.ts))
-- the hotkey cancelling the gesture when any third key goes down — Ctrl+Shift is the prefix
-  of half the shortcuts in Windows ([hotkey.ts](src/main/hotkey.ts))
+- the hotkey cancelling the gesture when a key outside the chord goes down — a modifier
+  chord is the prefix of half the shortcuts in Windows ([hotkey.ts](src/main/hotkey.ts)).
+  The chords themselves are settings, validated by [hotkeys.ts](src/shared/hotkeys.ts): a
+  chord needs a modifier and at most one ordinary key, or it would fire while somebody typed
+- the welcome flow refusing to finish until the user is signed in. The app cannot transcribe
+  a word without an account, so a setup that skipped that step finished into a dead end
 - not using Electron's `globalShortcut`
 - `showInactive()` + `focusable: false` + a window that never resizes to fit a bigger pill
   ([overlay.ts](src/main/overlay.ts)) — it does *move*, though: holding the pill drags the

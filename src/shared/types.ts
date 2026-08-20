@@ -1,5 +1,10 @@
 /** Shared between main and renderers. Keep this dependency-free. */
 
+import { DEFAULT_HOTKEYS, type HotkeySettings } from './hotkeys';
+
+/** Re-exported so a consumer of `Settings` doesn't need a second import for its one field. */
+export type { Chord, HotkeySettings } from './hotkeys';
+
 export type Language = 'uz' | 'ru' | 'en';
 
 /**
@@ -47,7 +52,20 @@ export interface OverlayStatus {
   partial: string;
   /** Human-readable message, only set in ERROR. */
   message: string;
+  /**
+   * A thing the user can *do* about this state, drawn as a button on the pill instead of a
+   * sentence.
+   *
+   * There is exactly one so far, and it earned the field: "you are signed out" used to be
+   * an error message, which is a sentence telling somebody to go and find a window and a
+   * button in it. It is not an error — it is the one step left before the app works — so
+   * the pill offers the step. See the `.prompt` rules in the overlay's HTML.
+   */
+  prompt?: OverlayPrompt;
 }
+
+/** `sign-in` — the pill becomes a Google sign-in button. `''` — no offer, the default. */
+export type OverlayPrompt = '' | 'sign-in' | 'signing-in';
 
 export interface AudioDevice {
   /** Friendly name shown in settings, e.g. "Микрофон (DroidCam Audio)". */
@@ -96,6 +114,18 @@ export interface Settings {
   /** AudioDevice.id, or '' to use the system default input. */
   deviceId: string;
   /**
+   * Which keys start a dictation.
+   *
+   * A setting, now, and it was not before: the app watched Ctrl+Shift and that was that.
+   * Two things forced the change. Ctrl+Shift is the prefix of half the shortcuts in
+   * Windows, so people who live in one of those apps were cancelling dictations by
+   * reflex — and a keyboard is personal enough that "the combination we chose" is not an
+   * answer for a tool someone holds down a hundred times a day. See src/shared/hotkeys.ts
+   * for the chord rules, which exist so a user cannot bind something that would break the
+   * rest of their machine.
+   */
+  hotkeys: HotkeySettings;
+  /**
    * Minimum recording length; anything shorter is treated as an accidental tap.
    * Deliberately has no control in Settings — the default is right for nearly everyone,
    * and the escape hatch is hand-editing settings.json (re-read on the next hotkey press).
@@ -137,6 +167,10 @@ export interface Settings {
    * A flag of its own rather than "do they have a key", which is what this used to be:
    * the app ships with keys now, so key presence no longer distinguishes a first run from
    * a hundredth, and gating on it would show the welcome screen to nobody.
+   *
+   * It is only ever set at the *end* of the flow, and the flow's first step cannot be
+   * passed while signed out. That is deliberate: the app cannot transcribe a word without
+   * an account, so a setup that finished without one finished into a dead end.
    */
   onboarded: boolean;
 }
@@ -216,6 +250,7 @@ export const DEFAULT_STYLE: StyleSettings = {
 export const DEFAULT_SETTINGS: Settings = {
   language: 'uz',
   deviceId: '',
+  hotkeys: DEFAULT_HOTKEYS,
   minRecordingMs: 300,
   launchAtLogin: false,
   showIdlePill: true,
@@ -265,6 +300,12 @@ export const IPC = {
    */
   overlayToggle: 'overlay:toggle',
   /**
+   * overlay renderer -> main: the sign-in button on the pill was pressed. Opens the system
+   * browser, exactly as the button in the app window does — the point of putting it on the
+   * pill is that the pill is where the user already is when they find out they need it.
+   */
+  overlaySignIn: 'overlay:sign-in',
+  /**
    * overlay renderer -> main: a drag of the pill began / ended. The renderer only reports
    * the button going down and up — main moves the window itself by polling the cursor,
    * because the renderer's screen coordinates and Electron's DIP coordinates disagree on
@@ -272,6 +313,12 @@ export const IPC = {
    */
   overlayDragStart: 'overlay:drag-start',
   overlayDragEnd: 'overlay:drag-end',
+  /**
+   * main -> overlay renderer: the push-to-talk chord, already formatted ("Ctrl + Shift").
+   * The hover hint names the keys, and the keys are a setting now — a hint that still said
+   * Ctrl+Shift to somebody who had changed it would be worse than no hint.
+   */
+  overlayHotkey: 'overlay:hotkey',
   /** main -> overlay renderer: which dock the pill sits in, so CSS can align the content.
    *  Also sent mid-drag with the dock the magnet is pulling toward, so the pill settles
    *  into the slot as it is carried rather than jumping into it on release. */
@@ -298,6 +345,17 @@ export const IPC = {
   micLevel: 'mic:level',
   /** main -> app renderer, when the test's ffmpeg dies (busy device, no permission). */
   micError: 'mic:error',
+  /** ---- Shortcut test ----
+   *  The welcome flow and the Sozlamalar pane both ask "do these keys light up?", and the
+   *  answer has to come from the *global hook* rather than from a DOM keydown — the thing
+   *  being tested is whether uiohook sees the keyboard at all, which a focused window's own
+   *  key events would answer yes to even when it doesn't.
+   *
+   *  main only ever reports keys that belong to the chord being watched. A channel that
+   *  streamed every keystroke to a renderer would be a keylogger with a nice reason. */
+  hotkeyWatch: 'hotkey:watch',
+  /** main -> app renderer: which of the watched chord's keys are down right now. */
+  hotkeyKeys: 'hotkey:keys',
   /** Auto-update. */
   updateCheck: 'update:check',
   updateInstall: 'update:install',

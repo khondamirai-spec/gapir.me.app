@@ -1,6 +1,12 @@
 import { join } from 'node:path';
 import { BrowserWindow, screen, type Display, type Rectangle } from 'electron';
-import { IPC, type AppState, type OverlayDock, type OverlayStatus } from '@shared/types';
+import {
+  IPC,
+  type AppState,
+  type OverlayDock,
+  type OverlayPrompt,
+  type OverlayStatus
+} from '@shared/types';
 import { destroyDockGuides, hideDockGuides, showDockGuides } from './dock-guides';
 
 /**
@@ -70,7 +76,15 @@ const BOTTOM_GAP = 0;
  * the renderer put it. Change one and change the other; the CSS says so too.
  */
 const PAD_BOTTOM = 24;
-const PAD_SIDE = 16;
+/**
+ * How far a side-docked pill sits from the screen edge. 8px, and it used to be 16: at the
+ * old distance the pill read as something resting *near* the edge rather than fixed to it,
+ * with a strip of the user's own window showing through the gap. Half of PAD_BOTTOM rather
+ * than all of it, because the shadow that offset is really paying for is `0 8px 32px` —
+ * cast downward, so a side dock needs far less room for it than the bottom dock does.
+ * Mirrored by the `#hit` rules in the overlay's HTML; change one and change the other.
+ */
+const PAD_SIDE = 8;
 /**
  * The hovered group at a side dock, where it stops being the bottom dock's box turned on its
  * side: the pill is rotated but the hint beside it is not, so this reaches across the pill
@@ -140,6 +154,15 @@ let hovered = false;
 let idleVisible = true;
 /** Last state pushed to the renderer, so visibility can be re-evaluated on a setting change. */
 let lastState: AppState = 'IDLE';
+/**
+ * The offer riding on that state, if any. Kept beside it because the sign-in pill is a
+ * different *shape* from the error pill it shares a state with — a 232px button rather than
+ * a 336px paragraph — and hitRect has to know which of the two the cursor is being tested
+ * against.
+ */
+let lastPrompt: OverlayPrompt = '';
+/** The push-to-talk chord as the hint spells it. Mirrors `Settings.hotkeys.pushToTalk`. */
+let hotkeyHint = '';
 /** Which dock the pill sits in. Mirrors the `overlayDock` setting; see setDock. */
 let dock: OverlayDock = 'center';
 /** How far down a side dock it sits, 0..1 of the work area. Mirrors `overlayDockY`. */
@@ -409,10 +432,11 @@ export function createOverlay(): BrowserWindow {
   // pill in the bottom dock, unhovered, whatever the app is actually doing. Every push below
   // is idempotent, so re-running it costs a few bytes over the bridge.
   win.webContents.on('did-finish-load', () => {
-    updateOverlay({ state: lastState, level: 0, partial: '', message: '' });
+    updateOverlay({ state: lastState, level: 0, partial: '', message: '', prompt: lastPrompt });
     // Nothing has been told to *this* page, whatever a previous one was told.
     sentDockClass = null;
     sendDockClass(dock);
+    win?.webContents.send(IPC.overlayHotkey, hotkeyHint);
     if (win && !win.isDestroyed()) win.webContents.send(IPC.overlayHover, hovered);
   });
 
@@ -541,6 +565,10 @@ function hitRect(bounds: Rectangle): Rectangle {
     // The 44×32 tick capsule.
     width = 64;
     height = 40;
+  } else if (lastPrompt) {
+    // The sign-in button pill: a single line, so much narrower than an error.
+    width = 244;
+    height = 56;
   } else if (lastState === 'ERROR') {
     // The 336×62 error pill.
     width = 344;
@@ -569,8 +597,9 @@ function hitRect(bounds: Rectangle): Rectangle {
   }
 
   // An error is the one state that does not rotate — a sideways three-line sentence is not
-  // readable — so it sits square in the middle of its window, and so does its hit box.
-  if (lastState === 'ERROR') {
+  // readable — so it sits square in the middle of its window, and so does its hit box. The
+  // sign-in pill is words too, and a button besides: it keeps the same exception.
+  if (lastState === 'ERROR' || lastPrompt) {
     return {
       x: Math.round(bounds.x + (bounds.width - width) / 2),
       y: Math.round(bounds.y + (bounds.height - height) / 2),
@@ -579,10 +608,10 @@ function hitRect(bounds: Rectangle): Rectangle {
     };
   }
 
-  // Every side-docked box runs from just outside the docked edge inward, with a little slack
-  // on the edge side because the pill is against a screen edge and a cursor that overshoots
-  // it should not lose the pill.
-  const outside = PAD_SIDE - 8;
+  // Every side-docked box runs from the docked edge itself inward, so the whole of PAD_SIDE
+  // is slack: the pill is against a screen edge, and a cursor that overshoots it outward has
+  // nowhere else to be going.
+  const outside = 0;
 
   // The hovered group is the one shape that is not simply the laid-out pill turned on its
   // side, because the hint beside it is NOT rotated: the pill runs 64px down the edge while
@@ -778,9 +807,21 @@ export function endDrag(): { dock: OverlayDock; y: number } | null {
   return { dock: next, y: dockY };
 }
 
+/**
+ * Tell the pill which keys to name in its hover hint.
+ *
+ * Pushed rather than read, because the overlay renderer has no access to settings — its
+ * preload surface is deliberately the smallest of the three (see src/preload/index.ts).
+ */
+export function setHotkeyHint(text: string): void {
+  hotkeyHint = text;
+  if (win && !win.isDestroyed()) win.webContents.send(IPC.overlayHotkey, text);
+}
+
 export function updateOverlay(status: OverlayStatus): void {
   if (!win || win.isDestroyed()) return;
   lastState = status.state;
+  lastPrompt = status.prompt ?? '';
   applyVisibility();
   win.webContents.send(IPC.overlayStatus, status);
 }

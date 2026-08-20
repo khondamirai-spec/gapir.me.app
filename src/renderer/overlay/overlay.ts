@@ -1,7 +1,7 @@
 // Same brand faces as the app window — the pill shows transcript text, and it must not be
 // the one surface still speaking in Segoe UI. See src/renderer/fonts/fonts.css.
 import '../fonts/fonts.css';
-import type { AppState, OverlayStatus } from '../../shared/types';
+import type { AppState, OverlayPrompt, OverlayStatus } from '../../shared/types';
 
 /**
  * The pill's only job is to render whatever state main sends it. It holds no dictation
@@ -28,6 +28,7 @@ const barsEl = document.getElementById('bars') as HTMLDivElement;
 const spinner = document.getElementById('spinner') as unknown as SVGElement;
 const check = document.getElementById('check') as unknown as SVGElement;
 const label = document.getElementById('label') as HTMLDivElement;
+const tipKeys = document.getElementById('tipKeys') as HTMLElement;
 
 /**
  * The pill's appearance has two independent inputs — the dictation state, which main owns,
@@ -38,6 +39,12 @@ const label = document.getElementById('label') as HTMLDivElement;
 let lastState: AppState = 'IDLE';
 let hovered = false;
 let hasText = false;
+/**
+ * The offer the pill is currently making, if any — see `OverlayStatus.prompt`. Kept beside
+ * the state rather than derived from it because it *replaces* the state's usual appearance:
+ * a sign-in offer arrives on ERROR and must not be drawn as one.
+ */
+let prompt: OverlayPrompt = '';
 
 function applyClasses(): void {
   // `active` is the black capsule; `thinking` narrows it to the spinner alone, because the
@@ -47,7 +54,12 @@ function applyClasses(): void {
     classes.push('active');
   if (lastState === 'TRANSCRIBING' || lastState === 'INJECTING') classes.push('thinking');
   if (lastState === 'DONE') classes.push('done');
-  else if (lastState === 'ERROR') classes.push('error');
+  else if (prompt) {
+    // `prompt` and `error` are mutually exclusive on purpose: the error rules paint a red
+    // border, and this is an invitation rather than a failure.
+    classes.push('prompt');
+    if (prompt === 'signing-in') classes.push('waiting');
+  } else if (lastState === 'ERROR') classes.push('error');
   if (hasText) classes.push('with-text');
   if (hovered) classes.push('hover');
   pill.className = classes.join(' ');
@@ -131,6 +143,7 @@ function truncate(text: string, max = 34): string {
 function render(status: OverlayStatus): void {
   // The classes drive the pill's whole geometry; see the CSS for what each state looks like.
   lastState = status.state;
+  prompt = status.prompt ?? '';
 
   // Recording only: the meter measures the microphone, and once the hotkey is released there
   // is nothing left to measure. The spinner says "working" on its own.
@@ -162,8 +175,13 @@ function render(status: OverlayStatus): void {
       break;
 
     case 'ERROR':
-      // The red pill already signals "error"; spend the limited width on the message.
-      label.textContent = status.message;
+      // Two different pills share this state. The offer says what pressing it does; a real
+      // error has a red pill signalling "error" already, so it spends the width on the
+      // message instead.
+      label.textContent =
+        prompt === 'sign-in' ? 'Google bilan kirish'
+        : prompt === 'signing-in' ? 'Brauzerda davom eting…'
+        : status.message;
       break;
 
     case 'IDLE':
@@ -173,7 +191,8 @@ function render(status: OverlayStatus): void {
       break;
   }
 
-  // Only the active states widen for text; an error is already a wide pill of its own.
+  // Only the active states widen for text; an error and an offer are each a wide pill of
+  // their own already.
   hasText = label.textContent !== '' && status.state !== 'ERROR';
   applyClasses();
 }
@@ -187,6 +206,11 @@ window.api.onOverlayHover(setHovered);
 
 // Which dock the pill sits in. Main owns the window's position; the class only aligns the
 // content toward the docked edge (and anchors the tooltip so it can't hang off the screen).
+// The hint names the user's own chord, not the one the app shipped with.
+window.api.onOverlayHotkey((keys) => {
+  tipKeys.textContent = keys;
+});
+
 window.api.onOverlayDock((dock) => {
   document.body.classList.toggle('dock-left', dock === 'left');
   document.body.classList.toggle('dock-right', dock === 'right');
@@ -249,5 +273,13 @@ pill.addEventListener('click', () => {
     didDrag = false;
     return;
   }
+  // While the pill is an offer it is that offer's button and nothing else. Toggling a
+  // dictation here would start one that cannot transcribe, which is what put the offer on
+  // screen in the first place.
+  if (prompt === 'sign-in') {
+    void window.api.overlaySignIn();
+    return;
+  }
+  if (prompt === 'signing-in') return;
   void window.api.toggleDictation();
 });

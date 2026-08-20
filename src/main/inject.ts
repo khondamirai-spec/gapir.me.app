@@ -67,11 +67,13 @@ export async function injectText(text: string): Promise<void> {
   const snap = snapshot();
   clipboard.writeText(text);
 
-  // The user has just let go of the hotkey, but the OS may not have processed both keyups
-  // yet. Synthesising Ctrl+V while it still believes Shift is held would send the target
-  // app Ctrl+Shift+V — a different command in most editors — so let the physical keys
-  // settle. (Click-started dictations have no keys down at all, and paste arrives a full
-  // transcription round-trip after the release anyway; this guards the mock's instant path.)
+  // The user has just let go of the hotkey, but the OS may not have processed every keyup
+  // yet. Synthesising Ctrl+V while it still believes the rest of the chord is held would
+  // send the target app Ctrl+Shift+V, or Ctrl+Alt+V — a different command in most editors —
+  // so let the physical keys settle. The delay is deliberately chord-agnostic: the chord is
+  // a setting now, and there is no combination this wait does not cover. (Click-started
+  // dictations have no keys down at all, and paste arrives a full transcription round-trip
+  // after the release anyway; this guards the mock's instant path.)
   await sleep(SETTLE_DELAY_MS);
 
   try {

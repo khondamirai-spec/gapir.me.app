@@ -1,3 +1,9 @@
+// FIRST, and it has to be. This import decides where `userData` is *as a side effect of
+// being imported*, and several modules below build a store or a log file out of that path
+// while they are being imported too. ES modules evaluate in import order, so moving this
+// line down is not a formatting change — it silently sends everything back to the old
+// folder. See src/main/app-paths.ts.
+import { pathsNote } from './app-paths';
 import { join, resolve } from 'node:path';
 import {
   app,
@@ -11,7 +17,17 @@ import {
   dialog
 } from 'electron';
 import { IPC, type AppSection, type Settings } from '@shared/types';
-import { beginDrag, createOverlay, destroyOverlay, endDrag, setDock, setIdleVisible } from './overlay';
+import {
+  beginDrag,
+  createOverlay,
+  destroyOverlay,
+  endDrag,
+  setDock,
+  setHotkeyHint,
+  setIdleVisible
+} from './overlay';
+import { hotkey } from './hotkey';
+import { formatChord } from '@shared/hotkeys';
 import { dictation } from './state';
 import { getSettings, setSettings } from './config';
 import { refreshDevices } from './audio';
@@ -161,7 +177,15 @@ function openApp(section: AppSection): void {
     appWin = null;
     // Nothing is listening for levels any more, and the test holds the microphone open.
     stopMicTest();
+    // Likewise the shortcut test: the window that asked for key reports is gone, and a
+    // watch nobody reads is a watch nobody remembers to turn off.
+    hotkey.watch([]);
   });
+}
+
+/** The pill's hover hint names the user's own chord; keep the two in step. */
+function publishHotkeyHint(): void {
+  setHotkeyHint(formatChord(getSettings().hotkeys.pushToTalk));
 }
 
 /** Send to the app window if it's open; a closed window re-reads everything on open. */
@@ -172,7 +196,7 @@ function toAppWindow(channel: string, payload?: unknown): void {
 function buildTray(): void {
   const image = nativeImage.createFromPath(iconPath('tray.png'));
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-  tray.setToolTip('gapir me — Ctrl+Shift bosib gapiring');
+  tray.setToolTip(`gapir me — ${formatChord(getSettings().hotkeys.pushToTalk)} bosib gapiring`);
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -208,6 +232,13 @@ function registerIpc(): void {
   // click means, the pill only reports it.
   ipcMain.handle(IPC.overlayToggle, () => dictation.toggle());
 
+  // The Google button on the pill. Same call as the app window's, and the same contract:
+  // it resolves when the browser opens, not when the user is signed in.
+  ipcMain.handle(IPC.overlaySignIn, async () => {
+    const result = await signIn();
+    if (result.ok) dictation.noteSigningIn();
+  });
+
   // Dragging the pill to a new dock. The renderer reports only the button going down and
   // up; the window is moved and snapped in overlay.ts, and the chosen dock is persisted
   // here so the pill comes back where it was left.
@@ -226,6 +257,13 @@ function registerIpc(): void {
       setSettings(patch);
       // Applied here rather than inside config.ts so that module stays free of UI concerns.
       if (patch.showIdlePill !== undefined) setIdleVisible(patch.showIdlePill);
+      // A chord is stored *and* installed: the hook keeps its own copy, and the pill's hint
+      // names the keys. Read back through getSettings rather than trusting `patch`, which
+      // may hold a chord setSettings sanitised on the way in.
+      if (patch.hotkeys !== undefined) {
+        dictation.applyHotkeys();
+        publishHotkeyHint();
+      }
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -261,6 +299,13 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(IPC.micTestStop, () => stopMicTest());
+
+  // "Press the keys — do they light up?", answered by the global hook rather than by the
+  // window's own key events, because whether the hook sees the keyboard at all is exactly
+  // what the welcome flow is asking. main reports only the chord it was handed.
+  ipcMain.handle(IPC.hotkeyWatch, (_e, chord: unknown) => {
+    hotkey.watch(Array.isArray(chord) ? chord.filter((k): k is string => typeof k === 'string') : []);
+  });
 
   ipcMain.handle(IPC.updateCheck, () => checkForUpdates());
   ipcMain.handle(IPC.updateInstall, () => installUpdate());
@@ -333,17 +378,30 @@ function bootstrap(): void {
   // First, so that everything below reports its failures somewhere a user can find them.
   initLogger();
 
+  // app-paths.ts runs before the logger exists — it decides where the log file goes — so it
+  // leaves its one line here. Silent when there was nothing to move, which is every launch
+  // after the first.
+  const note = pathsNote();
+  if (note) console.log(note);
+
   registerProtocol();
   registerIpc();
   createOverlay();
+  publishHotkeyHint();
   setIdleVisible(getSettings().showIdlePill);
   setDock(getSettings().overlayDock, { y: getSettings().overlayDockY });
   buildTray();
 
   // Keep an open window in step with dictations happening in other apps.
+  hotkey.on('keys', (keys) => toAppWindow(IPC.hotkeyKeys, keys));
   onHistoryChanged(() => toAppWindow(IPC.historyChanged));
   onUpdateStatus((status) => toAppWindow(IPC.updateStatus, status));
-  onAccountChanged((state) => toAppWindow(IPC.authChanged, state));
+  onAccountChanged((state) => {
+    toAppWindow(IPC.authChanged, state);
+    // The pill may still be offering the sign-in that just succeeded. Told rather than
+    // watched for, so state.ts keeps its one-way dependency on auth.ts.
+    if (state.user) dictation.clearSignInPrompt();
+  });
   void initUpdater();
 
   // Restoring the session is what decides whether the very next hotkey press can dictate, so

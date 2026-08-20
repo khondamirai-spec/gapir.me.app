@@ -49,6 +49,19 @@ const api = {
   },
 
   /**
+   * Overlay: the Google button on the pill was pressed. Opens the system browser — the same
+   * call the app window's sign-in button makes, reached from where the user actually is.
+   */
+  overlaySignIn(): Promise<void> {
+    return ipcRenderer.invoke(IPC.overlaySignIn);
+  },
+
+  /** Overlay: the push-to-talk chord, formatted for the hover hint. */
+  onOverlayHotkey(cb: (keys: string) => void): () => void {
+    return subscribe(IPC.overlayHotkey, cb);
+  },
+
+  /**
    * Overlay: the pill is being held / was released. The renderer reports only the gesture —
    * main moves the window itself by polling the cursor, and snaps it to the nearest dock on
    * release. See beginDrag/endDrag in src/main/overlay.ts.
@@ -125,6 +138,18 @@ const api = {
 
   onMicError(cb: (message: string) => void): () => void {
     return subscribe(IPC.micError, cb);
+  },
+
+  /** ---- Shortcut test ----
+   *  Ask main to report which of `chord`'s keys are down, as seen by the global hook rather
+   *  than by this window — that is the thing being tested. Pass `[]` to stop; main only ever
+   *  reports keys from the chord it was handed. See IPC.hotkeyWatch. */
+  watchHotkey(chord: string[]): Promise<void> {
+    return ipcRenderer.invoke(IPC.hotkeyWatch, chord);
+  },
+
+  onHotkeyKeys(cb: (keys: string[]) => void): () => void {
+    return subscribe(IPC.hotkeyKeys, cb);
   },
 
   /** ---- Updates ---- */

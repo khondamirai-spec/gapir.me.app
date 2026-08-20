@@ -2,6 +2,8 @@
 export const app = {
   isPackaged: false,
   getPath: () => '',
+  setPath: () => {},
+  setName: () => {},
   setLoginItemSettings: () => {}
 };
 

@@ -10,6 +10,18 @@ import type {
   StyleSettings,
   UpdateStatus
 } from '../../shared/types';
+import {
+  chordEquals,
+  chordProblem,
+  DEFAULT_HOTKEYS,
+  formatChord,
+  keyLabel,
+  keyNameFromCode,
+  pushToTalkWarning,
+  sortChord,
+  type Chord,
+  type HotkeySettings
+} from '../../shared/hotkeys';
 import { countWords, wordsPerMinute, WORD_CHARS } from '../../shared/text';
 
 /**
@@ -78,6 +90,8 @@ const ICONS: Record<string, string> = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.5"/><path d="M12 17.2h.01"/>',
   user: '<circle cx="12" cy="8" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/>',
+  pencil:
+    '<path d="M4 20h4.2l9.6-9.6a2.4 2.4 0 0 0 0-3.4l-.8-.8a2.4 2.4 0 0 0-3.4 0L4 15.8z"/><path d="M13.4 6.6l4 4"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-6A3.5 3.5 0 0 0 3 6.5v6A2.5 2.5 0 0 0 5.5 15"/>',
   trash:
     '<path d="M4.5 6.5h15"/><path d="M9.5 6.5V4.8A1.3 1.3 0 0 1 10.8 3.5h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7"/><path d="M6.5 6.5 7.4 20a1.3 1.3 0 0 0 1.3 1.2h6.6a1.3 1.3 0 0 0 1.3-1.2l.9-13.5"/>',
@@ -150,7 +164,28 @@ function createMeter(container: HTMLElement): Meter {
  * asked last wins, and the loser's button is put back.
  */
 const micTest = {
-  active: null as { button: HTMLButtonElement; meter: Meter } | null,
+  active: null as { button: HTMLButtonElement | null; meter: Meter; msg: HTMLElement } | null,
+
+  /**
+   * Open the microphone and feed `meter`.
+   *
+   * `button` is optional because the welcome flow has none: its microphone step runs the
+   * test the moment it is opened, which is the whole answer to "is this the right mic?" —
+   * asking someone to press Tekshirish first only adds a step between the question and its
+   * answer. Sozlamalar still passes one, because there the test is a thing you ask for.
+   */
+  async start(
+    deviceId: string,
+    meter: Meter,
+    button: HTMLButtonElement | null,
+    msg: HTMLElement
+  ): Promise<void> {
+    await this.stop();
+    setMsg(msg, '');
+    this.active = { button, meter, msg };
+    if (button) button.textContent = 'To‘xtatish';
+    await window.api.startMicTest(deviceId);
+  },
 
   async toggle(
     deviceId: string,
@@ -161,16 +196,12 @@ const micTest = {
     const wasMine = this.active?.button === button;
     await this.stop();
     if (wasMine) return;
-
-    setMsg(msg, '');
-    this.active = { button, meter };
-    button.textContent = 'To‘xtatish';
-    await window.api.startMicTest(deviceId);
+    await this.start(deviceId, meter, button, msg);
   },
 
   async stop(): Promise<void> {
     if (!this.active) return;
-    this.active.button.textContent = 'Tekshirish';
+    if (this.active.button) this.active.button.textContent = 'Tekshirish';
     this.active.meter.reset();
     this.active = null;
     await window.api.stopMicTest();
@@ -178,6 +209,15 @@ const micTest = {
 };
 
 window.api.onMicLevel((level) => micTest.active?.meter.set(level));
+
+// A failed test belongs to whichever view opened the microphone, and the record carries its
+// own message element so this does not have to guess from the button — the welcome flow's
+// test has no button at all.
+window.api.onMicError((message) => {
+  const target = micTest.active?.msg;
+  void micTest.stop();
+  if (target) setMsg(target, message, 'err');
+});
 
 async function fillDevices(select: HTMLSelectElement, selectedId: string): Promise<number> {
   const devices = await window.api.listDevices();
@@ -368,7 +408,7 @@ function renderHistory(): void {
     } else {
       empty.innerHTML =
         '<span class="big">Hali hech narsa aytilmagan</span>' +
-        'Xohlagan dasturda <kbd>Ctrl</kbd> + <kbd>Shift</kbd> ni bosib turib gapiring.<br />' +
+        `Xohlagan dasturda ${hotkeyCaps()} ni bosib turib gapiring.<br />` +
         'Aytganingiz shu yerda paydo bo‘ladi.';
     }
     entriesEl.appendChild(empty);
@@ -1493,6 +1533,8 @@ function renderAccount(): void {
     account.error ? 'err' : signedIn ? 'ok' : ''
   );
 
+  renderWelcomeAuth();
+
   if (!account.user) return;
 
   // textContent, not innerHTML: a display name comes from Google and is arbitrary text.
@@ -1587,43 +1629,527 @@ window.api.onAccountChanged((state) => {
   renderAccount();
 });
 
+// --------------------------------------------------------------- shortcuts
+
+/**
+ * The chord, drawn as keycaps.
+ *
+ * Built as an HTML string because two of its callers already build markup (the empty-history
+ * placeholder, and the `[data-hotkey]` slots scattered through the window). It is safe to do
+ * so here and nowhere else: every name in a chord comes from `sanitizeChord`, which accepts
+ * only names from a fixed table — see BINDABLE_KEYS in src/shared/hotkeys.ts. Nothing a user
+ * types reaches this function.
+ */
+function capsHtml(chord: Chord): string {
+  if (!chord.length) return '<kbd>—</kbd>';
+  return chord.map((key) => `<kbd>${keyLabel(key)}</kbd>`).join(' + ');
+}
+
+function hotkeyCaps(): string {
+  return capsHtml(settings.hotkeys.pushToTalk);
+}
+
+/** Fill every place in the window that names the shortcut. Called whenever it changes. */
+function renderHotkeyText(): void {
+  const html = hotkeyCaps();
+  for (const slot of document.querySelectorAll<HTMLElement>('[data-hotkey]')) {
+    slot.innerHTML = html;
+  }
+  el<HTMLElement>('wKeysLead').innerHTML =
+    `Tavsiya: ${html}. Boshqa dasturlar bilan urishsa — pastdagi tugmadan o‘zgartiring.`;
+  el<HTMLElement>('wTryLead').innerHTML =
+    `${html} ni bosib turing, gapiring, qo‘yib yuboring. Matn kursor turgan joyga yoziladi — ` +
+    'hozir esa quyidagi maydonga.';
+}
+
+// ---------------------------------------------------------- shortcut editor
+
+const hotkeyModalEl = el<HTMLElement>('hotkeyModal');
+const hkMsgEl = el<HTMLElement>('hkMsg');
+
+/** Which row is currently listening for keys, if any. */
+let hkRecording: keyof HotkeySettings | null = null;
+/** Keys seen going down during this recording — accumulated, never removed. */
+let hkPressed: string[] = [];
+/** Keys still physically down, so the recording can commit when the last one is released. */
+const hkHeld = new Set<string>();
+
+const HK_ROWS: { key: keyof HotkeySettings; row: string; keys: string; edit: string }[] = [
+  { key: 'pushToTalk', row: 'hkRowPush', keys: 'hkKeysPush', edit: 'hkEditPush' },
+  { key: 'handsFree', row: 'hkRowFree', keys: 'hkKeysFree', edit: 'hkEditFree' }
+];
+
+el<HTMLButtonElement>('hkEditPush').innerHTML = icon('pencil', 15);
+el<HTMLButtonElement>('hkEditFree').innerHTML = icon('pencil', 15);
+el<HTMLButtonElement>('hkClearFree').innerHTML = icon('trash', 15);
+
+function renderHotkeyEditor(): void {
+  for (const { key, row, keys } of HK_ROWS) {
+    const chord = settings.hotkeys[key];
+    const box = el<HTMLElement>(keys);
+    box.replaceChildren();
+
+    if (hkRecording === key) {
+      // Mid-recording the box shows what has been pressed so far, so a chord builds up
+      // under the fingers rather than appearing all at once when they let go.
+      const shown = hkPressed.length ? sortChord(hkPressed) : [];
+      if (!shown.length) box.appendChild(hintSpan('Tugmalarni bosing…'));
+      else for (const name of shown) box.appendChild(capSpan(name));
+    } else if (!chord.length) {
+      box.appendChild(hintSpan('O‘chirilgan'));
+    } else {
+      for (const name of chord) box.appendChild(capSpan(name));
+    }
+
+    el<HTMLElement>(row).classList.toggle('recording', hkRecording === key);
+  }
+
+  el<HTMLButtonElement>('hkClearFree').classList.toggle(
+    'hidden',
+    settings.hotkeys.handsFree.length === 0
+  );
+}
+
+function capSpan(name: string): HTMLElement {
+  const cap = document.createElement('span');
+  cap.className = 'hk-cap';
+  cap.textContent = keyLabel(name);
+  return cap;
+}
+
+function hintSpan(text: string): HTMLElement {
+  const hint = document.createElement('span');
+  hint.className = 'hk-empty';
+  hint.textContent = text;
+  return hint;
+}
+
+function startRecording(key: keyof HotkeySettings): void {
+  hkRecording = key;
+  hkPressed = [];
+  hkHeld.clear();
+  setMsg(hkMsgEl, 'Kerakli tugmalarni bosib turing va qo‘yib yuboring. Bekor qilish — Esc.');
+  renderHotkeyEditor();
+}
+
+function stopRecording(): void {
+  hkRecording = null;
+  hkPressed = [];
+  hkHeld.clear();
+  renderHotkeyEditor();
+}
+
+/**
+ * Record a chord from this window's own key events.
+ *
+ * DOM events rather than the global hook, and that is right here even though the *test* on
+ * the welcome flow's fourth step deliberately uses the hook: recording is a thing done to a
+ * focused dialog, and `KeyboardEvent.code` is the physical key — the same thing the hook
+ * will be asked to match later. Capture phase, so the keys never reach the controls behind.
+ */
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (!hkRecording) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.code === 'Escape') {
+      stopRecording();
+      setMsg(hkMsgEl, '');
+      return;
+    }
+    // Auto-repeat while a chord is being held would add the same key again and again.
+    if (e.repeat) return;
+
+    const name = keyNameFromCode(e.code);
+    if (!name) {
+      setMsg(hkMsgEl, 'Bu tugmani bog‘lab bo‘lmaydi', 'warn');
+      return;
+    }
+    if (!hkPressed.includes(name)) hkPressed.push(name);
+    hkHeld.add(name);
+    renderHotkeyEditor();
+  },
+  true
+);
+
+window.addEventListener(
+  'keyup',
+  (e) => {
+    if (!hkRecording) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    hkHeld.delete(keyNameFromCode(e.code));
+    // The chord is finished when the last key comes back up — that is what "press this
+    // combination" means, and waiting for it is what lets Ctrl, then Shift, then Space be
+    // read as one chord rather than three.
+    if (hkHeld.size > 0) return;
+
+    const target = hkRecording;
+    const chord = sortChord(hkPressed);
+    const problem = chordProblem(chord);
+    if (problem) {
+      hkPressed = [];
+      setMsg(hkMsgEl, problem, 'err');
+      renderHotkeyEditor();
+      return;
+    }
+
+    stopRecording();
+    void commitChord(target, chord);
+  },
+  true
+);
+
+async function commitChord(key: keyof HotkeySettings, chord: Chord): Promise<void> {
+  const hotkeys: HotkeySettings = { ...settings.hotkeys, [key]: chord };
+  // The two must not be the same chord: whichever matched first would make the other
+  // unreachable, and the user would be left pressing keys that do nothing.
+  if (
+    hotkeys.pushToTalk.length &&
+    hotkeys.handsFree.length &&
+    chordEquals(hotkeys.pushToTalk, hotkeys.handsFree)
+  ) {
+    setMsg(hkMsgEl, 'Ikkala amal uchun bir xil tugmalar bo‘lmaydi', 'err');
+    renderHotkeyEditor();
+    return;
+  }
+
+  if (!(await patch({ hotkeys }))) return;
+  const warning = key === 'pushToTalk' ? pushToTalkWarning(chord) : '';
+  setMsg(hkMsgEl, warning || 'Saqlandi', warning ? 'warn' : 'ok');
+  renderHotkeyEditor();
+  renderHotkeyText();
+  // The welcome flow's keycaps are drawn from this chord, and main is now watching a
+  // different one.
+  if (welcomeStep === 3) void enterStep(3);
+}
+
+function openHotkeyEditor(): void {
+  setMsg(hkMsgEl, '');
+  renderHotkeyEditor();
+  hotkeyModalEl.classList.remove('hidden');
+}
+
+function closeHotkeyEditor(): void {
+  stopRecording();
+  setMsg(hkMsgEl, '');
+  hotkeyModalEl.classList.add('hidden');
+}
+
+for (const { key, edit } of HK_ROWS) {
+  el<HTMLButtonElement>(edit).addEventListener('click', () => startRecording(key));
+}
+
+el<HTMLButtonElement>('hkClearFree').addEventListener('click', () => void commitChord('handsFree', []));
+el<HTMLButtonElement>('hkDone').addEventListener('click', closeHotkeyEditor);
+el<HTMLElement>('hkScrim').addEventListener('click', closeHotkeyEditor);
+el<HTMLButtonElement>('openHotkeys').addEventListener('click', openHotkeyEditor);
+
+el<HTMLButtonElement>('hkReset').addEventListener('click', async () => {
+  if (!(await patch({ hotkeys: DEFAULT_HOTKEYS }))) return;
+  setMsg(hkMsgEl, 'Standart holatga qaytarildi', 'ok');
+  renderHotkeyEditor();
+  renderHotkeyText();
+  if (welcomeStep === 3) void enterStep(3);
+});
+
 // ----------------------------------------------------------------- welcome
 
+/**
+ * Setup, as a wizard rather than a scrolling page.
+ *
+ * The order is the order the app needs things in, and the first step is the one that made
+ * this a wizard at all: the app cannot transcribe a single word without an account, so
+ * "Boshladik" used to finish a setup that had quietly skipped the only step that mattered.
+ * One step to a screen means the button forward can refuse — and it does, on step 0, until
+ * the deep link comes back from the browser.
+ */
+const WELCOME_STEPS = ['Kirish', 'Mikrofon', 'Til', 'Tugmalar', 'Sinov', 'Tayyor'];
+const LAST_STEP = WELCOME_STEPS.length - 1;
+
 const welcomeEl = el<HTMLElement>('welcome');
+const wRailEl = el<HTMLElement>('wRail');
 const wNameEl = el<HTMLInputElement>('wName');
-const wDeviceEl = el<HTMLSelectElement>('wDevice');
-const wMicTestEl = el<HTMLButtonElement>('wMicTest');
 const wMicMsgEl = el<HTMLElement>('wMicMsg');
 const wMsgEl = el<HTMLElement>('wMsg');
+const wTryEl = el<HTMLTextAreaElement>('wTry');
+const wTryMsgEl = el<HTMLElement>('wTryMsg');
+const wKeysEl = el<HTMLElement>('wKeys');
+const wKeysMsgEl = el<HTMLElement>('wKeysMsg');
+const wNextEl = el<HTMLButtonElement>('wNext');
+const wBackEl = el<HTMLButtonElement>('wBack');
 const wMeter = createMeter(el<HTMLElement>('wMeter'));
 
-wMicTestEl.addEventListener('click', () => {
-  void micTest.toggle(wDeviceEl.value, wMeter, wMicTestEl, wMicMsgEl);
-});
+let welcomeStep = 0;
+/** The furthest step reached, so the rail can offer the ones already done. */
+let welcomeSeen = 0;
+/** Whether the practice step has produced a real dictation yet. */
+let welcomeDictated = false;
 
-// Registered here, below both mic-test buttons' declarations, so the closure can never be
-// invoked inside their temporal dead zone — it closes over wMicTestEl/wMicMsgEl above.
-window.api.onMicError((message) => {
-  const target = micTest.active?.button === wMicTestEl ? wMicMsgEl : micMsgEl;
-  void micTest.stop();
-  setMsg(target, message, 'err');
-});
+const LANGUAGES: { value: Language; label: string }[] = [
+  { value: 'uz', label: 'O‘zbekcha' },
+  { value: 'ru', label: 'Ruscha' },
+  { value: 'en', label: 'Inglizcha' }
+];
 
-el<HTMLButtonElement>('wDone').addEventListener('click', async () => {
-  const ok = await patch({
-    userName: wNameEl.value,
-    deviceId: wDeviceEl.value,
-    onboarded: true
+function isWelcomeOpen(): boolean {
+  return !welcomeEl.classList.contains('hidden');
+}
+
+function renderWelcomeRail(): void {
+  wRailEl.replaceChildren();
+  WELCOME_STEPS.forEach((label, index) => {
+    if (index > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'w-rail-sep';
+      wRailEl.appendChild(sep);
+    }
+    const step = document.createElement('button');
+    step.className = 'w-rail-step';
+    if (index === welcomeStep) step.classList.add('on');
+    else if (index < welcomeSeen) step.classList.add('done');
+    step.innerHTML = `<i>${index + 1}</i>`;
+    step.appendChild(document.createTextNode(label));
+    // Only backwards, and only to a step already passed: the rail reports progress, it does
+    // not let someone jump over the sign-in.
+    if (index < welcomeStep) step.addEventListener('click', () => void enterStep(index));
+    wRailEl.appendChild(step);
   });
+}
+
+function renderWelcomeAuth(): void {
+  const signedIn = account.user !== null;
+  el<HTMLElement>('wSignInRow').classList.toggle('hidden', signedIn);
+  el<HTMLElement>('wSignedIn').classList.toggle('hidden', !signedIn);
+  el<HTMLButtonElement>('wSignInRetry').classList.toggle('hidden', signedIn || !account.error);
+
+  if (account.user) {
+    // textContent, not innerHTML: a display name comes from Google and is arbitrary text.
+    el<HTMLElement>('wSignedName').textContent = account.user.name || 'Kirdingiz';
+    el<HTMLElement>('wSignedEmail').textContent = account.user.email;
+  }
+  if (welcomeStep === 0) renderWelcomeFoot();
+}
+
+function renderWelcomeFoot(): void {
+  wBackEl.classList.toggle('hidden', welcomeStep === 0);
+  wNextEl.textContent = welcomeStep === LAST_STEP ? 'Boshladik' : 'Davom etish';
+
+  // The one gate in the flow. Everything else has a workable default; this does not.
+  const blocked = welcomeStep === 0 && account.user === null;
+  wNextEl.disabled = blocked;
+  setMsg(
+    wMsgEl,
+    blocked ? 'Davom etish uchun Google bilan kiring' : '',
+    blocked ? 'warn' : ''
+  );
+}
+
+async function renderDeviceList(): Promise<void> {
+  const list = el<HTMLElement>('wDevices');
+  const devices = await window.api.listDevices();
+  list.replaceChildren();
+
+  const rows = [
+    { id: '', label: 'Avtomatik', note: 'Tizim ro‘yxatidagi birinchi mikrofon' },
+    ...devices.map((device) => ({ id: device.id, label: device.label, note: '' }))
+  ];
+
+  for (const row of rows) {
+    const button = document.createElement('button');
+    button.className = 'w-device';
+    if (row.id === settings.deviceId) button.classList.add('on');
+    const name = document.createElement('b');
+    name.textContent = row.label;
+    button.appendChild(name);
+    if (row.note) {
+      const note = document.createElement('span');
+      note.textContent = row.note;
+      button.appendChild(note);
+    }
+    button.addEventListener('click', async () => {
+      if (!(await patch({ deviceId: row.id }))) return;
+      await renderDeviceList();
+      // Reopen the microphone on the new device, so the answer to "is it this one?" is the
+      // meter moving rather than another list.
+      await startWelcomeMicTest();
+    });
+    list.appendChild(button);
+  }
+}
+
+async function startWelcomeMicTest(): Promise<void> {
+  setMsg(wMicMsgEl, '');
+  await micTest.start(settings.deviceId, wMeter, null, wMicMsgEl);
+}
+
+function renderWelcomeLanguages(): void {
+  const box = el<HTMLElement>('wLangs');
+  box.replaceChildren();
+  for (const language of LANGUAGES) {
+    const chip = document.createElement('button');
+    chip.className = 'w-chip';
+    chip.textContent = language.label;
+    if (language.value === settings.language) chip.classList.add('on');
+    chip.addEventListener('click', async () => {
+      if (!(await patch({ language: language.value }))) return;
+      renderWelcomeLanguages();
+      renderStyle();
+    });
+    box.appendChild(chip);
+  }
+}
+
+/** The keycaps for the shortcut test, lit by main from the global hook. */
+function renderKeycaps(down: string[] = []): void {
+  const chord = settings.hotkeys.pushToTalk;
+  wKeysEl.replaceChildren();
+  chord.forEach((name, index) => {
+    if (index > 0) {
+      const plus = document.createElement('span');
+      plus.className = 'kbd-plus';
+      plus.textContent = '+';
+      wKeysEl.appendChild(plus);
+    }
+    const cap = document.createElement('span');
+    cap.className = down.includes(name) ? 'kbd-cap down' : 'kbd-cap';
+    cap.textContent = keyLabel(name);
+    wKeysEl.appendChild(cap);
+  });
+}
+
+window.api.onHotkeyKeys((keys) => {
+  if (!isWelcomeOpen() || welcomeStep !== 3) return;
+  renderKeycaps(keys);
+  if (keys.length === settings.hotkeys.pushToTalk.length && keys.length > 0) {
+    setMsg(wKeysMsgEl, 'Ishlayapti — shu tugmalarni bosib gapirasiz', 'ok');
+  }
+});
+
+/**
+ * Enter a step, doing whatever that step needs and undoing whatever the last one held.
+ *
+ * The undo half matters more than it looks: two of the steps hold a real resource — the
+ * microphone, and main's key-state reporting — and a wizard that left either running would
+ * keep the mic open for the rest of the session, or keep reporting keystrokes to a window
+ * that stopped drawing them.
+ */
+async function enterStep(index: number): Promise<void> {
+  await micTest.stop();
+  await window.api.watchHotkey([]);
+
+  welcomeStep = Math.max(0, Math.min(LAST_STEP, index));
+  welcomeSeen = Math.max(welcomeSeen, welcomeStep);
+
+  for (const step of document.querySelectorAll<HTMLElement>('.w-step')) {
+    step.classList.toggle('on', Number(step.dataset.step) === welcomeStep);
+  }
+  renderWelcomeRail();
+  renderWelcomeFoot();
+
+  if (welcomeStep === 0) renderWelcomeAuth();
+
+  if (welcomeStep === 1) {
+    el<HTMLElement>('wDevicePicker').classList.add('hidden');
+    await renderDeviceList();
+    await startWelcomeMicTest();
+  }
+
+  if (welcomeStep === 2) renderWelcomeLanguages();
+
+  if (welcomeStep === 3) {
+    setMsg(wKeysMsgEl, '');
+    renderKeycaps();
+    await window.api.watchHotkey(settings.hotkeys.pushToTalk);
+  }
+
+  if (welcomeStep === 4) {
+    welcomeDictated = false;
+    setMsg(wTryMsgEl, '');
+    wTryEl.value = '';
+    wTryEl.focus();
+  }
+
+  if (welcomeStep === 5) await renderSummary();
+}
+
+/** What was actually chosen, in the four words each choice deserves. */
+async function renderSummary(): Promise<void> {
+  el<HTMLElement>('wSumAccount').textContent = account.user?.email || '—';
+  el<HTMLElement>('wSumLang').textContent =
+    LANGUAGES.find((language) => language.value === settings.language)?.label ?? '—';
+  el<HTMLElement>('wSumKeys').textContent = formatChord(settings.hotkeys.pushToTalk);
+
+  // The device is stored as ffmpeg's ASCII alternative name, which is not a thing to show
+  // anybody; look the friendly one back up. Cached in main, so this costs no enumeration.
+  const mic = el<HTMLElement>('wSumMic');
+  if (!settings.deviceId) {
+    mic.textContent = 'Avtomatik';
+    return;
+  }
+  const devices = await window.api.listDevices();
+  mic.textContent = devices.find((device) => device.id === settings.deviceId)?.label ?? 'Avtomatik';
+}
+
+el<HTMLButtonElement>('wMicChange').addEventListener('click', () => {
+  el<HTMLElement>('wDevicePicker').classList.toggle('hidden');
+});
+
+el<HTMLButtonElement>('wMicYes').addEventListener('click', () => void enterStep(2));
+el<HTMLButtonElement>('wKeysYes').addEventListener('click', () => void enterStep(4));
+
+el<HTMLButtonElement>('wKeysNo').addEventListener('click', () => {
+  setMsg(
+    wKeysMsgEl,
+    'Boshqa dastur tugmalarni ushlab turgan bo‘lishi mumkin. Boshqa juftlikni tanlab ko‘ring, ' +
+      'yoki ilovani administrator sifatida ishga tushiring.',
+    'warn'
+  );
+});
+
+el<HTMLButtonElement>('wEditKeys').addEventListener('click', openHotkeyEditor);
+el<HTMLButtonElement>('wSignInRetry').addEventListener('click', () => void beginSignIn());
+
+wBackEl.addEventListener('click', () => void enterStep(welcomeStep - 1));
+
+wNextEl.addEventListener('click', async () => {
+  if (welcomeStep < LAST_STEP) {
+    await enterStep(welcomeStep + 1);
+    return;
+  }
+  await finishWelcome();
+});
+
+// A dictation that lands anywhere — this textarea, or another app — is proof the whole
+// chain works. The textarea is only where it lands most conveniently.
+wTryEl.addEventListener('input', () => {
+  if (welcomeStep !== 4 || !wTryEl.value.trim() || welcomeDictated) return;
+  welcomeDictated = true;
+  setMsg(wTryMsgEl, 'Ishladi. Xohlagan dasturda xuddi shunday bo‘ladi.', 'ok');
+});
+
+async function finishWelcome(): Promise<void> {
+  const ok = await patch({ userName: wNameEl.value, onboarded: true });
   if (!ok) {
     setMsg(wMsgEl, 'Saqlab bo‘lmadi', 'err');
     return;
   }
   await micTest.stop();
+  await window.api.watchHotkey([]);
   welcomeEl.classList.add('hidden');
   renderGreeting();
   await show('dictation');
-});
+}
+
+/** Open the flow at the beginning. Called from `start()` on a first run. */
+async function openWelcome(): Promise<void> {
+  welcomeEl.classList.remove('hidden');
+  wNameEl.value = settings.userName;
+  await enterStep(0);
+}
 
 // ------------------------------------------------------------------- start
 
@@ -1637,17 +2163,18 @@ async function start(): Promise<void> {
   el<HTMLElement>('modalVersion').textContent = version;
   renderGreeting();
   renderStyle();
+  // Every place that names the shortcut reads it from the setting now, including this
+  // window's own headings — so nothing is drawn until it has been filled in once.
+  renderHotkeyText();
+  renderHotkeyEditor();
   el<HTMLTextAreaElement>('scratchpadText').value = settings.scratchpad;
   setMaximized(false);
-
-  await fillDevices(wDeviceEl, settings.deviceId);
-  wNameEl.value = settings.userName;
 
   await show(requestedSection());
 
   // The welcome flow sits on top of everything rather than replacing it, so closing it
   // reveals a window that is already loaded and on the right section.
-  if (!settings.onboarded) welcomeEl.classList.remove('hidden');
+  if (!settings.onboarded) await openWelcome();
 }
 
 void start();

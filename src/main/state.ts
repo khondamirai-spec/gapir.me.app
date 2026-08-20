@@ -18,7 +18,7 @@ import { geminiLive } from './stt/gemini-live';
 import { proxyBatch } from './stt/proxy-batch';
 import { mockStt, useMockStt } from './stt/mock';
 import type { SttSession, SttSessionOptions } from './stt/types';
-import type { AppState, Settings } from '@shared/types';
+import type { AppState, OverlayPrompt, Settings } from '@shared/types';
 
 /**
  * The dictation state machine — the only place that coordinates hotkey, audio, STT and
@@ -36,6 +36,15 @@ import type { AppState, Settings } from '@shared/types';
 const ERROR_DISPLAY_MS = 2500;
 /** Long enough for the tick to register, short enough not to delay the next dictation. */
 const DONE_DISPLAY_MS = 900;
+/**
+ * How long the "sign in with Google" pill stays up.
+ *
+ * Much longer than an error, because it is not one: it is a button, and a button that
+ * disappears while somebody is moving the mouse toward it is worse than no button. Not
+ * permanent either — a red bar pinned across the bottom of the screen for a user who has
+ * decided not to sign in today is the app arguing with them.
+ */
+const SIGN_IN_DISPLAY_MS = 9000;
 
 /**
  * Where this dictation's transcript will come from.
@@ -74,6 +83,8 @@ class Dictation {
   private route: Route = 'none';
   /** Pending return to IDLE from a transient DONE/ERROR display. */
   private resetTimer: NodeJS.Timeout | null = null;
+  /** The offer currently drawn on the pill, if any — see `OverlayStatus.prompt`. */
+  private prompt: OverlayPrompt = '';
   /**
    * Which dictation is the current one.
    *
@@ -89,7 +100,19 @@ class Dictation {
     hotkey.on('start', () => void this.onStart());
     hotkey.on('stop', () => void this.onStop());
     hotkey.on('cancel', () => this.onCancel());
+    // Hands-free from the keyboard is the same two transitions the pill's click drives.
+    hotkey.on('toggle', () => this.toggle());
+    this.applyHotkeys();
     hotkey.start();
+  }
+
+  /**
+   * Push the user's chords into the hook. Called at startup and whenever the shortcut
+   * settings change — the hook holds its own copy, so a chord edited in Sozlamalar that
+   * never reaches it would appear to save and then do nothing.
+   */
+  applyHotkeys(): void {
+    hotkey.setChords(getSettings().hotkeys);
   }
 
   /**
@@ -106,9 +129,10 @@ class Dictation {
       void this.onStart();
   }
 
-  private set(state: AppState, message = ''): void {
+  private set(state: AppState, message = '', prompt: OverlayPrompt = ''): void {
     this.state = state;
-    updateOverlay({ state, level: this.level, partial: this.partial, message });
+    this.prompt = prompt;
+    updateOverlay({ state, level: this.level, partial: this.partial, message, prompt });
   }
 
   /**
@@ -180,11 +204,12 @@ class Dictation {
     // configured build is telling the user to sign in, which they can do; an unconfigured one
     // is a broken build, and reinstalling is the honest advice for a person who cannot fix it.
     if (this.route === 'none') {
-      this.fail(
-        isConfigured()
-          ? 'Kirish kerak — ilovani ochib, Google bilan kiring'
-          : 'Ilova kaliti topilmadi — ilovani qayta o‘rnating'
-      );
+      // Signed out is not an error, and it stopped being written as one. It is the single
+      // step left before the app works, so the pill offers the step — a Google button the
+      // user can press where they are — instead of a sentence telling them to go and find
+      // a window with a button in it. See `prompt` on OverlayStatus.
+      if (isConfigured()) this.promptSignIn();
+      else this.fail('Ilova kaliti topilmadi — ilovani qayta o‘rnating');
       return;
     }
 
@@ -403,6 +428,42 @@ class Dictation {
     this.scheduleReset(DONE_DISPLAY_MS);
     // A swallowed keyup (alt-tab, UAC prompt) would otherwise wedge the hotkey forever.
     hotkey.resetModifierState();
+  }
+
+  /**
+   * Offer sign-in on the pill itself.
+   *
+   * Deliberately not routed through `fail()`: there is nothing to tear down (no recorder, no
+   * session — this is decided before either is opened), nothing to log as an error, and the
+   * epoch must not move, because no dictation was ever in flight.
+   */
+  private promptSignIn(): void {
+    this.set('ERROR', '', 'sign-in');
+    this.scheduleReset(SIGN_IN_DISPLAY_MS);
+    hotkey.resetModifierState();
+  }
+
+  /**
+   * The browser is opening after a press of that button. A state of its own so the pill can
+   * say what it is waiting for — the sign-in itself finishes minutes later, in a browser,
+   * and comes back through the deep link.
+   */
+  noteSigningIn(): void {
+    this.set('ERROR', '', 'signing-in');
+    this.scheduleReset(SIGN_IN_DISPLAY_MS);
+  }
+
+  /**
+   * The deep link came back and there is an account now. Told to us rather than watched for,
+   * to keep this module's one-way dependency on auth.ts (state -> auth) intact.
+   *
+   * Only clears an offer, never a real error: an error the user has not read yet is not
+   * something a background sign-in gets to dismiss.
+   */
+  clearSignInPrompt(): void {
+    if (this.state !== 'ERROR' || !this.prompt) return;
+    this.clearResetTimer();
+    this.reset();
   }
 
   private fail(message: string): void {

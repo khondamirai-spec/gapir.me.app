@@ -21,10 +21,22 @@ port = 54323
 enabled = true
 # Must match the deployed project, or the PKCE redirect is rejected as an unknown site_url.
 site_url = "gapirme://auth-callback"
-# The desktop app comes back through a custom scheme rather than a web page. Supabase treats
-# this exactly like a mobile deep link — Google never sees the scheme, it redirects to
-# Supabase's own https callback and Supabase forwards to this.
-additional_redirect_urls = ["gapirme://auth-callback", "http://localhost:54321"]
+# Both halves of the handoff.
+#
+# The https page is where the browser actually lands (src/app/auth/callback in the website
+# repo): it tells the user they are signed in and hands the code to the app through the
+# custom scheme. The scheme itself stays listed because it is also the site_url above, and
+# because it is what an older installed build still asks for — an allowlist that dropped it
+# would break sign-in for everyone who has not updated yet.
+#
+# The apex is listed alongside www because gapir.me answers with a 308 to www.gapir.me, and
+# a build pointed at either must work. localhost is for `supabase start`.
+additional_redirect_urls = [
+  "gapirme://auth-callback",
+  "https://www.gapir.me/auth/callback",
+  "https://gapir.me/auth/callback",
+  "http://localhost:54321"
+]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 enable_signup = true

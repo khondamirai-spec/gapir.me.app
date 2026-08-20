@@ -82,12 +82,25 @@ const DEFAULT_ANON_KEY = 'eyJhbGci...';
 ### 2.2 Supabase
 
 1. **Authentication → Providers → Google**: enable, paste the client id and secret, save.
-2. **Authentication → URL Configuration → Redirect URLs**: add
+2. **Authentication → URL Configuration → Redirect URLs**: add all three
    ```
    gapirme://auth-callback
+   https://www.gapir.me/auth/callback
+   https://gapir.me/auth/callback
    ```
-   Without this Supabase refuses the forward and the user is left staring at a browser tab
+   Without these Supabase refuses the forward and the user is left staring at a browser tab
    that goes nowhere. It is the single most common reason sign-in "does nothing".
+
+   The https pages are where the browser now lands: the app asks for
+   `https://www.gapir.me/auth/callback` (see `AUTH_REDIRECT` in
+   [src/main/supabase-config.ts](../src/main/supabase-config.ts)), that page says "you are
+   signed in, you can close this window" and hands the code to the app through the
+   `gapirme://` scheme. The scheme stays listed because it is also the project's `site_url`,
+   and because builds released before this change still ask for it directly.
+
+   If the https address is missing from the list, Supabase falls back to `site_url` and
+   sign-in still completes — without the page. That makes a missing entry easy to overlook:
+   the flow works, it is just uglier than it should be.
 
 ### 2.3 While the app is unpublished
 

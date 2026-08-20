@@ -2,7 +2,9 @@
 
 Push-to-talk dictation for Uzbek. Hold **Ctrl+Shift**, speak, release — the text lands
 wherever your cursor is, in any app. Or click the pill at the bottom of the screen to
-dictate hands-free: click to start, click again (or Esc) to stop.
+dictate hands-free: click to start, click again (or Esc) to stop. The keys are yours to
+change (Sozlamalar → Umumiy → Diktovka tugmalari), and you can bind a second chord that
+starts and stops hands-free without the mouse.
 
 Like Wispr Flow, but Uzbek. The open-source dictation tools all run Whisper locally, which
 is precisely why none of them work in Uzbek. This one sends the audio to **Google Gemini**,
@@ -183,7 +185,7 @@ MB and is the obvious next optimisation.
 | Path | Role |
 | --- | --- |
 | [src/main/state.ts](src/main/state.ts) | The dictation state machine — the only module that coordinates the others |
-| [src/main/hotkey.ts](src/main/hotkey.ts) | Ctrl+Shift hold/release via a low-level keyboard hook |
+| [src/main/hotkey.ts](src/main/hotkey.ts) | The user's chords, hold/release, via a low-level keyboard hook |
 | [src/main/audio.ts](src/main/audio.ts) | ffmpeg capture, device enumeration, RMS, WAV wrapping |
 | [src/main/stt/](src/main/stt/) | The proxy adapter, the direct Gemini batch and Live adapters, the prompt, the mock |
 | [src/main/auth.ts](src/main/auth.ts) | Google sign-in and the encrypted Supabase session |
@@ -191,7 +193,9 @@ MB and is the obvious next optimisation.
 | [src/main/inject.ts](src/main/inject.ts) | The clipboard save → paste → restore dance |
 | [src/main/overlay.ts](src/main/overlay.ts) | The floating pill that must never steal focus |
 | [src/main/history.ts](src/main/history.ts) | The dictation log |
-| [src/renderer/app/](src/renderer/app/) | The window: all six panes and the first-run welcome |
+| [src/shared/hotkeys.ts](src/shared/hotkeys.ts) | What a chord is, in the one vocabulary main and both renderers share |
+| [src/main/app-paths.ts](src/main/app-paths.ts) | `%APPDATA%\gapir me\`, and the one-time move out of the old folder |
+| [src/renderer/app/](src/renderer/app/) | The window: all six panes, the shortcut editor, and the first-run setup |
 | [src/renderer/fonts/](src/renderer/fonts/) | The two brand typefaces, bundled because the renderers may not fetch |
 
 ## Things that look wrong but aren't
@@ -205,13 +209,21 @@ usage pattern, and would break the hotkey after the first dictation. The subproc
 happens to emit precisely the 16 kHz mono s16le that Gemini takes, so audio pipes through
 with no conversion.
 
-**A third key cancels the gesture.** Ctrl+Shift is the prefix of half the shortcuts in
-Windows — Ctrl+Shift+V, Ctrl+Shift+T, Ctrl+Shift+Esc — and holding the combo on the way to
-the third key looks exactly like the start of a dictation. So [hotkey.ts](src/main/hotkey.ts)
-cancels the moment any other key goes down mid-gesture: the user is typing a shortcut, not
-speaking, and the sub-`minRecordingMs` guard discards the false start's half-second of audio.
-(The trigger used to be Ctrl+CapsLock, which needed a whole synthetic-keystroke mechanism to
-un-toggle the caps state each press caused; Shift toggles nothing, so all of that is gone.)
+**A key outside the chord cancels the gesture.** Ctrl+Shift — the default — is the prefix
+of half the shortcuts in Windows, Ctrl+Shift+V, Ctrl+Shift+T, Ctrl+Shift+Esc, and holding the
+combo on the way to the third key looks exactly like the start of a dictation. So
+[hotkey.ts](src/main/hotkey.ts) cancels the moment a key that is not part of the gesture goes
+down: the user is typing a shortcut, not speaking, and the sub-`minRecordingMs` guard discards
+the false start's half-second of audio. (The trigger used to be Ctrl+CapsLock, which needed a
+whole synthetic-keystroke mechanism to un-toggle the caps state each press caused; a chord of
+pure modifiers toggles nothing, so all of that is gone — and it is why
+[hotkeys.ts](src/shared/hotkeys.ts) warns you off binding an ordinary key to a chord you
+*hold*.)
+
+**Setup will not finish until you have signed in.** Every dictation goes through our server,
+which needs an account, so a welcome flow that let you press past that step would hand you an
+app that cannot transcribe a word and no clue why. The one gate is the first step; everything
+after it — microphone, language, keys — has a working default and can be skipped.
 
 **The hotkey doesn't use Electron's `globalShortcut`.** That API requires a non-modifier
 key and only fires on press, never release, so a modifier-only hold gesture is impossible
@@ -322,7 +334,5 @@ Deliberately absent, in rough priority order:
 - **Code signing** — see Installing above.
 - **Latin/Cyrillic toggle** — Uzbek is split across both scripts, and the prompt currently
   pins output to Latin.
-- **Configurable hotkey** — currently hardcoded to Ctrl+Shift, changeable only by
-  editing `TRIGGER` in [src/main/hotkey.ts](src/main/hotkey.ts).
 - **Per-app style** — Wispr changes register between a chat window and a document; here the
   Uslub pane is global.
