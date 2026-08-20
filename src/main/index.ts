@@ -29,7 +29,7 @@ import {
 import { hotkey } from './hotkey';
 import { formatChord } from '@shared/hotkeys';
 import { dictation } from './state';
-import { getSettings, setSettings } from './config';
+import { dropLegacyAutostart, getSettings, setSettings } from './config';
 import { refreshDevices } from './audio';
 import {
   clearHistory,
@@ -373,7 +373,15 @@ function registerProtocol(): void {
 }
 
 function bootstrap(): void {
-  app.setAppUserModelId('uz.whisperuz.app');
+  // Must match `appId` in electron-builder.yml exactly — that is the id the installer
+  // stamps on the shortcuts, and Windows groups taskbar buttons and routes notifications by
+  // it. Two spellings means the running app and its own shortcut look like different
+  // programs.
+  app.setAppUserModelId('me.gapir.app');
+  // ...and clean up after the id this one replaced. Must come after the line above, and is
+  // its direct consequence: Electron keys the run-at-login registry value on the AUMID, so
+  // changing the AUMID orphans whatever an older build wrote. See dropLegacyAutostart.
+  dropLegacyAutostart();
 
   // First, so that everything below reports its failures somewhere a user can find them.
   initLogger();

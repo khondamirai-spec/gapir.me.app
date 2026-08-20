@@ -2,7 +2,7 @@ import { SAMPLE_RATE, BYTES_PER_SAMPLE } from '../audio';
 import type { SttAdapter, SttSession, SttSessionOptions } from './types';
 
 /**
- * Fake STT for development — enabled with WHISPER_UZ_MOCK_STT=1.
+ * Fake STT for development — enabled with GAPIR_ME_MOCK_STT=1.
  *
  * Lets the hotkey, overlay, level meter and paste path be exercised end to end without
  * an API key, a network connection, or spending a single so'm on transcription. It emits
@@ -75,4 +75,4 @@ export const mockStt: SttAdapter = {
   }
 };
 
-export const useMockStt = (): boolean => process.env.WHISPER_UZ_MOCK_STT === '1';
+export const useMockStt = (): boolean => process.env.GAPIR_ME_MOCK_STT === '1';

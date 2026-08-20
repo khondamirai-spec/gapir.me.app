@@ -5,7 +5,7 @@ import type { Language, StyleSettings } from '@shared/types';
  *
  * Gemini's batch and Live transports are the two implementations today, and the boundary
  * earns its keep by letting the state machine treat them identically — realtime first,
- * batch on any failure. Swapping in ElevenLabs Scribe or a self-hosted whisper-uz
+ * batch on any failure. Swapping in ElevenLabs Scribe or a self-hosted model
  * fine-tune would be the same shape of change.
  */
 
@@ -49,9 +49,9 @@ export interface SttAdapter {
  *
  * `plan` is its counterpart on the proxy path and is **not** the same failure, however
  * similar the message looks. `quota` is our problem and the user can do nothing about it;
- * `plan` is the user's daily allowance running out, and the answer is an offer to upgrade.
- * Collapsing the two would show someone an upgrade button for our outage, or an outage
- * message for a paywall.
+ * `plan` is the user's own weekly word allowance running out, and the answer is an offer to
+ * upgrade. Collapsing the two would show someone an upgrade button for our outage, or an
+ * outage message for a paywall.
  */
 export type SttErrorCode = 'quota' | 'auth' | 'model' | 'plan';
 

@@ -6,16 +6,17 @@ dictate hands-free: click to start, click again (or Esc) to stop. The keys are y
 change (Sozlamalar → Umumiy → Diktovka tugmalari), and you can bind a second chord that
 starts and stops hands-free without the mouse.
 
-Like Wispr Flow, but Uzbek. The open-source dictation tools all run Whisper locally, which
-is precisely why none of them work in Uzbek. This one sends the audio to **Google Gemini**,
-which handles Uzbek — including the Uzbek/Russian code-switching that real speech in
-Tashkent is full of — and bills per audio token, which works out to cents per hour of
-speech rather than dollars per hour.
+The open-source dictation tools all run a speech model locally, which is precisely why none
+of them work in Uzbek. This one sends the audio to **Google Gemini**, which handles Uzbek —
+including the Uzbek/Russian code-switching that real speech in Tashkent is full of — and
+bills per audio token, which works out to cents per hour of speech rather than dollars per
+hour.
 
 **Sign in with Google and dictate.** There is nothing to paste and nothing to choose — no API
 key, no model, no Settings screen that can be filled in wrongly. Everyone dictates on the same
-server-side key and the same model. A free plan covers 30 dictations a day; **Pro** raises that
-and is paid with Uzcard or Humo through Payme.
+server-side key and the same model. The free plan covers **1 000 words a week**; **Pro** raises
+that to 6 000 and is paid with Uzcard or Humo through Payme. The allowance is counted in words
+because that is what you actually get out of the app — and it resets every Monday.
 
 ## How it works
 
@@ -115,10 +116,10 @@ server, so working on the app never spends real users' quota — and it is how y
 anything except the account and billing flows:
 
 ```
-GEMINI_API_KEY=...              # or GOOGLE_API_KEY — both are read
-WHISPER_UZ_GEMINI_MODEL=...     # optional: try a model without cutting a release
-WHISPER_UZ_GEMINI_REALTIME=1    # optional: take the Live socket instead of batch
-SUPABASE_URL=...                # optional: point at a staging project
+GEMINI_API_KEY=...           # or GOOGLE_API_KEY — both are read
+GAPIR_ME_GEMINI_MODEL=...    # optional: try a model without cutting a release
+GAPIR_ME_GEMINI_REALTIME=1   # optional: take the Live socket instead of batch
+SUPABASE_URL=...             # optional: point at a staging project
 SUPABASE_ANON_KEY=...
 ```
 
@@ -302,9 +303,9 @@ in `auth.json`, encrypted with DPAPI.
 **Since dictation moved behind a server, that server sees things too, and it is worth being
 precise about which.** It receives the audio of each dictation, forwards it to Google, and
 returns the text — it does not store the audio or the transcript. What it does keep is one row
-per dictation holding the timestamp, the clip length and the *character count*, which is what
-the daily quota is counted from; the server log records the same figures and deliberately not
-the transcript, unlike the local log below. Signing in also stores your Google email and
+per dictation holding the timestamp, the clip length and the *character and word counts*,
+which is what the weekly quota is counted from; the server log records the same figures and
+deliberately not the transcript, unlike the local log below. Signing in also stores your Google email and
 display name. There is no telemetry beyond that.
 
 The diagnostic log next to them, `logs/main.log`, is the one thing that quotes transcripts

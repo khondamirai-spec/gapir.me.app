@@ -150,10 +150,20 @@ development and means you are not testing the proxy. Comment it out to exercise 
 They are rows, not constants, so this needs no deploy:
 
 ```sql
-update plan_limits set daily_limit = 50 where plan = 'free';
+update plan_limits set weekly_word_limit = 2000 where plan = 'free';
 ```
 
-Shipped defaults: free 30/day, pro 1000/day, 6 and 20 per minute, 2-minute clip cap.
+Shipped defaults: **free 1000 words/week, pro 6000 words/week**, 6 and 20 dictations per
+minute, 2-minute clip cap. The week starts Monday 00:00 Asia/Tashkent — `date_trunc('week')`
+is ISO, so this is the calendar week and not a rolling seven days.
+
+The quota is denominated in **words the server itself counted**, not in dictations: a clip is
+only priced once the transcript exists, so `reserve_dictation()` asks whether the user has any
+words left and `finalize_dictation()` writes down what the dictation actually cost. The
+consequence is deliberate and worth knowing before you tighten anything — a user with one word
+of allowance left still gets a whole dictation, bounded by `max_clip_ms`. There is no honest
+alternative: refusing a five-word correction because the *next* clip might not fit is absurd,
+and truncating a transcript to fit takes back words the user already said out loud.
 
 ---
 

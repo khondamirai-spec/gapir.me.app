@@ -48,6 +48,18 @@ function el<T extends Element>(id: string): T {
 let settings: Settings;
 let entries: HistoryEntry[] = [];
 
+/**
+ * Our cache of the account, as main last described it.
+ *
+ * Declared up here with the other two rather than beside the Hisob pane it mostly serves,
+ * because the Statistika pane reads it too (the weekly allowance) and `let` has a temporal
+ * dead zone: a call ordered even slightly differently — a renderer reload, a section opened
+ * straight from the tray — would throw on a variable that had not been reached yet, which is
+ * a nasty way to learn about module evaluation order. The initialiser is the signed-out
+ * state, which is also the truth until main says otherwise.
+ */
+let account: AccountState = { user: null, plan: null, error: '' };
+
 async function patch(change: Partial<Settings>): Promise<boolean> {
   const result = await window.api.setSettings(change);
   if (!result.ok) {
@@ -372,17 +384,80 @@ function startOfDay(ts: number): number {
   return date.getTime();
 }
 
+/**
+ * Uzbek month and weekday names, written out here rather than asked for.
+ *
+ * **`toLocaleDateString('uz-UZ', { month: 'long' })` does not return Uzbek.** Chromium's ICU
+ * has no calendar data for this locale and falls back to the root one, which renders August
+ * as `M08` and Monday as `Mon.` — the Statistika pane shipped a line reading
+ * "keyingisi M08 24, Mon." before anyone looked at it. Every user-facing string in this app
+ * is Uzbek by rule (see the Conventions section of CLAUDE.md), and a locale that answers in
+ * month codes cannot honour that rule, so the names are ours.
+ *
+ * Indexed by `Date#getMonth()` and `Date#getDay()` respectively, which is why the weekday
+ * list starts on Sunday even though the app's week starts on Monday. Read through them;
+ * never slice them. See HEAT_ROWS for the display order.
+ */
+const MONTH_NAMES = [
+  'yanvar',
+  'fevral',
+  'mart',
+  'aprel',
+  'may',
+  'iyun',
+  'iyul',
+  'avgust',
+  'sentabr',
+  'oktabr',
+  'noyabr',
+  'dekabr'
+];
+
+const WEEKDAY_NAMES = [
+  'yakshanba',
+  'dushanba',
+  'seshanba',
+  'chorshanba',
+  'payshanba',
+  'juma',
+  'shanba'
+];
+
+/** "24-avgust" — how a date is written in Uzbek, with the day fused to the month. */
+function formatDayMonth(ts: number, withYear = false): string {
+  const date = new Date(ts);
+  const base = `${date.getDate()}-${MONTH_NAMES[date.getMonth()]}`;
+  return withYear ? `${base} ${date.getFullYear()}` : base;
+}
+
+/** "24.08.2026" — the numeric form, for tooltips where a sentence would be too long. */
+function formatDateNumeric(ts: number): string {
+  const date = new Date(ts);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`;
+}
+
+/**
+ * A count with its thousands grouped: 1000 -> "1 000".
+ *
+ * Separate from `formatCount`, which abbreviates to "1.0K" and is right for a headline
+ * figure nobody does arithmetic on. It is wrong for anything the user is meant to measure
+ * themselves against — a weekly allowance drawn as "0 / 1.0K so'z" reads like a rounded
+ * estimate of a rule that is in fact exact.
+ *
+ * A non-breaking space, so the number never wraps across the gap it was grouped by.
+ */
+function formatNumber(value: number): string {
+  return value.toLocaleString('ru-RU').replace(/\s/g, '\u00a0');
+}
+
 /** BUGUN / KECHA / a date — the same three-way split the eye makes when scanning a log. */
 function dayLabel(ts: number): string {
   const today = startOfDay(Date.now());
   const day = startOfDay(ts);
   if (day === today) return 'Bugun';
   if (day === today - DAY_MS) return 'Kecha';
-  return new Date(ts).toLocaleDateString('uz-UZ', {
-    day: 'numeric',
-    month: 'long',
-    year: day < today - 300 * DAY_MS ? 'numeric' : undefined
-  });
+  return formatDayMonth(ts, day < today - 300 * DAY_MS);
 }
 
 function timeLabel(ts: number): string {
@@ -653,12 +728,71 @@ const chartEl = el<HTMLElement>('chart');
 
 function renderInsights(): void {
   const stats = computeStats(entries);
+  renderQuota();
   renderHeadline(stats);
   renderRhythm();
   renderStreak(stats);
   renderVoice(stats);
   renderChart();
 }
+
+/**
+ * The weekly allowance — the one card on this pane that does not come from history.json.
+ *
+ * It reads `account.plan`, which is whatever the server last said, and never recomputes the
+ * figure locally. That is not laziness: the server is the thing that enforces the limit, and
+ * a second opinion derived from the local log would be wrong for anyone who turned history
+ * off, cleared it, or dictates from a second machine. Two numbers that disagree about how
+ * much of somebody's week is left is worse than one number that is occasionally a few
+ * seconds stale.
+ */
+function renderQuota(): void {
+  const plan = account.plan;
+
+  // Signed out, or the first snapshot has not landed yet. The card stays, saying so — hiding
+  // it would make the pane silently change shape depending on a request in flight.
+  if (!account.user || !plan) {
+    el<HTMLElement>('quotaUsed').textContent = '—';
+    el<HTMLElement>('quotaOf').textContent = '';
+    el<HTMLElement>('quotaPlan').textContent = '';
+    el<HTMLElement>('quotaBar').style.width = '0%';
+    el<HTMLElement>('quotaNote').textContent = account.user
+      ? 'Yuklanmoqda…'
+      : 'Kirgandan so‘ng shu yerda haftalik limit ko‘rinadi.';
+    el<HTMLElement>('quotaActions').classList.add('hidden');
+    return;
+  }
+
+  const isPro = plan.plan === 'pro';
+  const left = Math.max(0, plan.wordLimit - plan.wordsUsed);
+  const ratio = plan.wordLimit > 0 ? Math.min(1, plan.wordsUsed / plan.wordLimit) : 0;
+
+  el<HTMLElement>('quotaUsed').textContent = formatNumber(plan.wordsUsed);
+  el<HTMLElement>('quotaOf').textContent =
+    `/ ${formatNumber(plan.wordLimit)} so‘z — ${formatNumber(left)} qoldi`;
+  el<HTMLElement>('quotaPlan').textContent = isPro ? 'Pro' : 'Bepul';
+
+  const bar = el<HTMLElement>('quotaBar');
+  bar.style.width = `${Math.round(ratio * 100)}%`;
+  bar.className = ratio >= 1 ? 'out' : ratio >= 0.66 ? 'low' : '';
+
+  const resets = formatResetDay(plan.resetsAt);
+  el<HTMLElement>('quotaNote').textContent =
+    left === 0
+      ? resets
+        ? `Limit tugadi. ${resets} kuni yangilanadi.`
+        : 'Limit tugadi — dushanbadan yangilanadi.'
+      : resets
+        ? `Har dushanba yangilanadi — keyingisi ${resets}.`
+        : 'Har dushanba yangilanadi.';
+
+  // Only ever offered on the free plan, and only as a button — the pitch itself lives in the
+  // welcome flow and the Hisob pane. A statistics screen that nagged would be a statistics
+  // screen people stop opening.
+  el<HTMLElement>('quotaActions').classList.toggle('hidden', isPro);
+}
+
+el<HTMLButtonElement>('quotaUpgrade').addEventListener('click', () => void show('account'));
 
 /** Rate an average typist sustains, and the baseline the "time saved" figure is measured against. */
 const TYPING_WPM = 40;
@@ -882,10 +1016,41 @@ function renderRhythm(): void {
 
 // --------------------------------------------------------------- heat map
 
-const WEEKDAYS = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
+/**
+ * Weekday names indexed by `Date#getDay()` — so Sunday is 0, because that is what the
+ * platform hands back. Read through this table, never sliced: the *display* order is Monday
+ * first (see HEAT_ROWS), and conflating the two is how a heat map ends up one row out.
+ */
+const WEEKDAYS_BY_GETDAY = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh'];
+
+/**
+ * The rows of the heat map, top to bottom: Monday first.
+ *
+ * It used to be Sunday first, which is neither the week Uzbekistan keeps nor — since the
+ * quota became words per week — the week the app is measuring. A column that started on
+ * Sunday while the allowance reset on Monday would put the first day of the user's new
+ * allowance in the *middle* of the last column, and there is no reading of that picture that
+ * tells them anything true.
+ */
+const HEAT_ROWS = [1, 2, 3, 4, 5, 6, 0];
+
 const MONTHS = ['Yan', 'Fev', 'Mar', 'Apr', 'May', 'Iyn', 'Iyl', 'Avg', 'Sen', 'Okt', 'Noy', 'Dek'];
 
 const WEEK_MS = 7 * DAY_MS;
+
+/**
+ * Midnight on the Monday of the week `ts` falls in, local time.
+ *
+ * The same boundary Postgres uses for the quota
+ * (date_trunc('week') is ISO, so Monday) — restated here because the heat map is drawn from
+ * the local log, not from the server. `(getDay() + 6) % 7` maps Sunday's 0 to 6, which is
+ * what makes Sunday the *last* day of the week it belongs to rather than the first day of
+ * the next one.
+ */
+function startOfWeek(ts: number): number {
+  const day = startOfDay(ts);
+  return day - ((new Date(day).getDay() + 6) % 7) * DAY_MS;
+}
 /** Columns on screen at once — about four months, which is what the card is wide enough for. */
 const HEAT_WEEKS = 18;
 /** How far back the arrows have walked, in weeks. */
@@ -908,8 +1073,9 @@ function renderHeat(stats: Stats): void {
   host.replaceChildren();
 
   const today = startOfDay(Date.now());
-  // Columns are calendar weeks starting Sunday, so the last one is the week we are in.
-  const thisWeek = today - new Date(today).getDay() * DAY_MS;
+  // Columns are calendar weeks starting Monday, so the last one is the week we are in — and
+  // the week the current allowance belongs to.
+  const thisWeek = startOfWeek(today);
   const firstWeek = thisWeek - (HEAT_WEEKS - 1 + heatOffset) * WEEK_MS;
 
   const peak = Math.max(...stats.byDay.values(), 1);
@@ -920,11 +1086,11 @@ function renderHeat(stats: Stats): void {
 
   const days = document.createElement('div');
   days.className = 'days';
-  // Sunday, Wednesday, Friday only — seven labels at this size is a wall of text, and the
-  // rows in between are read by position anyway.
-  WEEKDAYS.forEach((name, index) => {
+  // Every other row only — seven labels at this size is a wall of text, and the rows in
+  // between are read by position anyway. With Monday first that names Du, Ch, Ju.
+  HEAT_ROWS.forEach((weekday, index) => {
     const label = document.createElement('span');
-    label.textContent = index % 2 === 0 ? name : '';
+    label.textContent = index % 2 === 0 ? WEEKDAYS_BY_GETDAY[weekday] : '';
     days.appendChild(label);
   });
 
@@ -964,8 +1130,7 @@ function renderHeat(stats: Stats): void {
         cell.classList.add('streak');
       }
 
-      cell.title =
-        date > today ? '' : `${new Date(date).toLocaleDateString('uz-UZ')} — ${words} so‘z`;
+      cell.title = date > today ? '' : `${formatDateNumeric(date)} — ${formatNumber(words)} so‘z`;
       cells.appendChild(cell);
     }
   }
@@ -1172,7 +1337,7 @@ function renderChart(): void {
     rect.style.animationDelay = `${index * 26}ms`;
 
     const title = document.createElementNS(SVG_NS, 'title');
-    title.textContent = `${date.toLocaleDateString('uz-UZ')} — ${words} so‘z`;
+    title.textContent = `${formatDateNumeric(date.getTime())} — ${formatNumber(words)} so‘z`;
     rect.appendChild(title);
 
     svg.appendChild(rect);
@@ -1182,7 +1347,7 @@ function renderChart(): void {
   labels.className = 'labels';
   buckets.forEach((_, index) => {
     const label = document.createElement('div');
-    label.textContent = WEEKDAYS[new Date(today - (13 - index) * DAY_MS).getDay()];
+    label.textContent = WEEKDAYS_BY_GETDAY[new Date(today - (13 - index) * DAY_MS).getDay()];
     labels.appendChild(label);
   });
 
@@ -1494,8 +1659,6 @@ el<HTMLButtonElement>('openLogs').addEventListener('click', () => {
  * `onAccountChanged`. Every button below is written for that — none of them await a result
  * that will not come.
  */
-let account: AccountState = { user: null, plan: null, error: '' };
-
 const accSignedOutEl = el<HTMLElement>('accountSignedOut');
 const accSignedInEl = el<HTMLElement>('accountSignedIn');
 const accMsgEl = el<HTMLElement>('accMsg');
@@ -1564,22 +1727,43 @@ function renderAccount(): void {
     return;
   }
 
-  const left = Math.max(0, plan.limit - plan.used);
+  const left = Math.max(0, plan.wordLimit - plan.wordsUsed);
   el<HTMLElement>('accUsage').textContent =
-    `Bugun: ${plan.used} / ${plan.limit} diktovka — ${left} ta qoldi`;
+    `Bu hafta: ${formatNumber(plan.wordsUsed)} / ${formatNumber(plan.wordLimit)} so‘z — ` +
+    `${formatNumber(left)} so‘z qoldi`;
 
-  const ratio = plan.limit > 0 ? Math.min(1, plan.used / plan.limit) : 0;
+  const ratio = plan.wordLimit > 0 ? Math.min(1, plan.wordsUsed / plan.wordLimit) : 0;
   accBarEl.style.width = `${Math.round(ratio * 100)}%`;
   accBarEl.className = ratio >= 1 ? 'out' : ratio >= 0.66 ? 'low' : '';
 
+  // Two different dates, and they are not interchangeable: the allowance comes back every
+  // Monday whatever the plan, while Pro itself runs out on a date the user paid for. Both are
+  // shown when both apply, because "you have no words left" and "your subscription ends
+  // Thursday" are answers to different worries.
+  const lines: string[] = [];
+  const resets = formatResetDay(plan.resetsAt);
+  if (resets) lines.push(`Limit yangilanadi: ${resets}`);
   if (isPro && plan.expiresAt) {
     const until = new Date(plan.expiresAt);
-    el<HTMLElement>('accExpires').textContent = Number.isNaN(until.getTime())
-      ? ''
-      : `Pro amal qiladi: ${until.toLocaleDateString('uz-UZ')} gacha`;
-  } else {
-    el<HTMLElement>('accExpires').textContent = '';
+    if (!Number.isNaN(until.getTime())) {
+      lines.push(`Pro amal qiladi: ${formatDayMonth(until.getTime(), true)} gacha`);
+    }
   }
+  el<HTMLElement>('accExpires').textContent = lines.join(' · ');
+}
+
+/**
+ * "24-avgust, dushanba" — when the weekly allowance comes back.
+ *
+ * The server sends the instant rather than the app working out its own Monday, so this only
+ * formats. It still guards the parse: a malformed date drawn as "Invalid Date" next to a
+ * quota figure would read as the quota itself being broken.
+ */
+function formatResetDay(iso: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${formatDayMonth(date.getTime())}, ${WEEKDAY_NAMES[date.getDay()]}`;
 }
 
 async function beginSignIn(): Promise<void> {
@@ -1627,6 +1811,13 @@ el<HTMLButtonElement>('accUpgrade').addEventListener('click', async () => {
 window.api.onAccountChanged((state) => {
   account = state;
   renderAccount();
+  // The Statistika pane's weekly-allowance card reads the same snapshot, and it counts up as
+  // you dictate — so it has to be re-drawn here rather than only when the pane is opened.
+  renderQuota();
+  // The plan step's price comes from the same snapshot, and the snapshot lands *after* the
+  // sign-in that leads to that step — so the step is very often on screen showing an em dash
+  // when this arrives. Redrawing it here is what fills the price in.
+  if (isWelcomeOpen() && welcomeStep === STEP_PLAN) renderWelcomePlans();
 });
 
 // --------------------------------------------------------------- shortcuts
@@ -1824,7 +2015,7 @@ async function commitChord(key: keyof HotkeySettings, chord: Chord): Promise<voi
   renderHotkeyText();
   // The welcome flow's keycaps are drawn from this chord, and main is now watching a
   // different one.
-  if (welcomeStep === 3) void enterStep(3);
+  if (welcomeStep === STEP_KEYS) void enterStep(STEP_KEYS);
 }
 
 function openHotkeyEditor(): void {
@@ -1853,7 +2044,7 @@ el<HTMLButtonElement>('hkReset').addEventListener('click', async () => {
   setMsg(hkMsgEl, 'Standart holatga qaytarildi', 'ok');
   renderHotkeyEditor();
   renderHotkeyText();
-  if (welcomeStep === 3) void enterStep(3);
+  if (welcomeStep === STEP_KEYS) void enterStep(STEP_KEYS);
 });
 
 // ----------------------------------------------------------------- welcome
@@ -1866,9 +2057,30 @@ el<HTMLButtonElement>('hkReset').addEventListener('click', async () => {
  * "Boshladik" used to finish a setup that had quietly skipped the only step that mattered.
  * One step to a screen means the button forward can refuse — and it does, on step 0, until
  * the deep link comes back from the browser.
+ *
+ * `Reja` is second for a reason that is about honesty rather than conversion: an offer to
+ * pay is meaningless before there is an account to attach it to, and an imposition after the
+ * user has already spent five minutes setting the thing up. Directly after sign-in is the
+ * one place it is simply information. It is also the only step in the flow with *nothing*
+ * to decide — the forward button reads "Bepul davom etish" and does exactly that.
  */
-const WELCOME_STEPS = ['Kirish', 'Mikrofon', 'Til', 'Tugmalar', 'Sinov', 'Tayyor'];
+const WELCOME_STEPS = ['Kirish', 'Reja', 'Mikrofon', 'Til', 'Tugmalar', 'Sinov', 'Tayyor'];
 const LAST_STEP = WELCOME_STEPS.length - 1;
+
+/**
+ * The steps that other code has to name.
+ *
+ * Named rather than written as numbers because inserting `Reja` at position 1 moved four of
+ * them, and the literals were scattered across a hotkey watcher, two card buttons, a
+ * textarea listener and the chord editor — every one of which would have gone on compiling
+ * while pointing at the wrong screen. Step 0 stays a literal: it is the sign-in gate, and it
+ * is not going to move.
+ */
+const STEP_PLAN = 1;
+const STEP_MIC = 2;
+const STEP_LANG = 3;
+const STEP_KEYS = 4;
+const STEP_TRY = 5;
 
 const welcomeEl = el<HTMLElement>('welcome');
 const wRailEl = el<HTMLElement>('wRail');
@@ -1936,7 +2148,14 @@ function renderWelcomeAuth(): void {
 
 function renderWelcomeFoot(): void {
   wBackEl.classList.toggle('hidden', welcomeStep === 0);
-  wNextEl.textContent = welcomeStep === LAST_STEP ? 'Boshladik' : 'Davom etish';
+  // On the plan step the forward button *is* the skip — naming the free tier on it is what
+  // makes "no thanks" a first-class answer rather than something you have to go looking for.
+  wNextEl.textContent =
+    welcomeStep === LAST_STEP
+      ? 'Boshladik'
+      : welcomeStep === STEP_PLAN
+        ? 'Bepul davom etish'
+        : 'Davom etish';
 
   // The one gate in the flow. Everything else has a workable default; this does not.
   const blocked = welcomeStep === 0 && account.user === null;
@@ -2022,7 +2241,7 @@ function renderKeycaps(down: string[] = []): void {
 }
 
 window.api.onHotkeyKeys((keys) => {
-  if (!isWelcomeOpen() || welcomeStep !== 3) return;
+  if (!isWelcomeOpen() || welcomeStep !== STEP_KEYS) return;
   renderKeycaps(keys);
   if (keys.length === settings.hotkeys.pushToTalk.length && keys.length > 0) {
     setMsg(wKeysMsgEl, 'Ishlayapti — shu tugmalarni bosib gapirasiz', 'ok');
@@ -2052,33 +2271,57 @@ async function enterStep(index: number): Promise<void> {
 
   if (welcomeStep === 0) renderWelcomeAuth();
 
-  if (welcomeStep === 1) {
+  if (welcomeStep === STEP_PLAN) renderWelcomePlans();
+
+  if (welcomeStep === STEP_MIC) {
     el<HTMLElement>('wDevicePicker').classList.add('hidden');
     await renderDeviceList();
     await startWelcomeMicTest();
   }
 
-  if (welcomeStep === 2) renderWelcomeLanguages();
+  if (welcomeStep === STEP_LANG) renderWelcomeLanguages();
 
-  if (welcomeStep === 3) {
+  if (welcomeStep === STEP_KEYS) {
     setMsg(wKeysMsgEl, '');
     renderKeycaps();
     await window.api.watchHotkey(settings.hotkeys.pushToTalk);
   }
 
-  if (welcomeStep === 4) {
+  if (welcomeStep === STEP_TRY) {
     welcomeDictated = false;
     setMsg(wTryMsgEl, '');
     wTryEl.value = '';
     wTryEl.focus();
   }
 
-  if (welcomeStep === 5) await renderSummary();
+  if (welcomeStep === LAST_STEP) await renderSummary();
+}
+
+/**
+ * The price on the plan step, and nothing else on it.
+ *
+ * Read from the snapshot the server sent rather than written into the markup, for the same
+ * reason the Hisob pane does it: a price baked into a shipped HTML file is a price that goes
+ * stale the day it changes, and this one is quoted next to a payment button. Until the
+ * snapshot lands the card shows an em dash — an honest "we are asking" — rather than a
+ * number that might be wrong.
+ */
+function renderWelcomePlans(): void {
+  const tiyin = account.plan?.priceTiyin ?? 0;
+  el<HTMLElement>('wProPrice').textContent = tiyin > 0 ? formatSom(tiyin) : '—';
 }
 
 /** What was actually chosen, in the four words each choice deserves. */
 async function renderSummary(): Promise<void> {
   el<HTMLElement>('wSumAccount').textContent = account.user?.email || '—';
+  // Named rather than left off, because the plan step can be passed in one click and the
+  // summary is the last chance to notice that "Bepul davom etish" is what happened.
+  const plan = account.plan;
+  el<HTMLElement>('wSumPlan').textContent = !plan
+    ? '—'
+    : plan.plan === 'pro'
+      ? `Pro — haftasiga ${formatCount(plan.wordLimit)} so‘z`
+      : `Bepul — haftasiga ${formatCount(plan.wordLimit)} so‘z`;
   el<HTMLElement>('wSumLang').textContent =
     LANGUAGES.find((language) => language.value === settings.language)?.label ?? '—';
   el<HTMLElement>('wSumKeys').textContent = formatChord(settings.hotkeys.pushToTalk);
@@ -2098,8 +2341,26 @@ el<HTMLButtonElement>('wMicChange').addEventListener('click', () => {
   el<HTMLElement>('wDevicePicker').classList.toggle('hidden');
 });
 
-el<HTMLButtonElement>('wMicYes').addEventListener('click', () => void enterStep(2));
-el<HTMLButtonElement>('wKeysYes').addEventListener('click', () => void enterStep(4));
+el<HTMLButtonElement>('wMicYes').addEventListener('click', () => void enterStep(STEP_LANG));
+el<HTMLButtonElement>('wKeysYes').addEventListener('click', () => void enterStep(STEP_TRY));
+
+el<HTMLButtonElement>('wUpgrade').addEventListener('click', async () => {
+  const msg = el<HTMLElement>('wPlanMsg');
+  setMsg(msg, 'To‘lov sahifasi ochilmoqda…');
+  const error = await window.api.startCheckout();
+  if (error) {
+    setMsg(msg, error, 'err');
+    return;
+  }
+  // The plan flips when Payme calls our server, not when the browser opens — so setup does
+  // not wait for it and does not claim it happened. Carrying on to the microphone is right
+  // either way: the payment finishes in a browser tab while the user keeps going here.
+  setMsg(
+    msg,
+    'Brauzerda to‘lovni yakunlang. Sozlashni davom ettiraverasiz — reja to‘lovdan so‘ng ochiladi.',
+    'ok'
+  );
+});
 
 el<HTMLButtonElement>('wKeysNo').addEventListener('click', () => {
   setMsg(
@@ -2126,7 +2387,7 @@ wNextEl.addEventListener('click', async () => {
 // A dictation that lands anywhere — this textarea, or another app — is proof the whole
 // chain works. The textarea is only where it lands most conveniently.
 wTryEl.addEventListener('input', () => {
-  if (welcomeStep !== 4 || !wTryEl.value.trim() || welcomeDictated) return;
+  if (welcomeStep !== STEP_TRY || !wTryEl.value.trim() || welcomeDictated) return;
   welcomeDictated = true;
   setMsg(wTryMsgEl, 'Ishladi. Xohlagan dasturda xuddi shunday bo‘ladi.', 'ok');
 });

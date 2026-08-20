@@ -1,4 +1,7 @@
-appId: uz.whisperuz.app
+# Reverse-DNS of gapir.me. It was `uz.whisperuz.app` until 2026-08-20, named after a program
+# this one stopped being long ago — see `nsis.guid` at the bottom for what that rename cost
+# and how it was paid.
+appId: me.gapir.app
 productName: gapir me
 copyright: MIT
 
@@ -82,3 +85,23 @@ nsis:
   # /releases/latest/download/gapir-me-Setup.exe a permanent link the download page can
   # hardcode. electron-updater reads the real filename out of latest.yml, so it doesn't care.
   artifactName: gapir-me-Setup.${ext}
+  # **This is the installed identity, and it must not change.** electron-builder normally
+  # derives it as a UUIDv5 of `appId`, which means renaming the appId silently renames the
+  # app as far as Windows is concerned: the new installer would not recognise the existing
+  # install, and everyone who already has gapir me would end up with two entries in Add/Remove
+  # Programs and two Start Menu shortcuts after their next update.
+  #
+  # The value below is the GUID the shipped v0.2.4 installer already registered. Pinning it is
+  # what lets the appId above be corrected without anyone noticing; it is an opaque identifier
+  # now, and nothing reads the string it was once derived from.
+  #
+  # Verified rather than guessed, and reproducible — it is uuid5 of the *old* appId under
+  # electron-builder's namespace, and it matches the uninstall key on a machine that has
+  # v0.2.4 installed:
+  #
+  #   python -c "import uuid; print(uuid.uuid5(uuid.UUID('50e065bc-3134-11e6-9bab-38c9862bdaf3'), 'uz.whisperuz.app'))"
+  #   -> e474cddf-64b1-5ea6-961c-655c5864acae
+  #
+  # (The new appId would derive ea5be9ac-7e82-5c12-a8f2-9bb2848d72cd, which is precisely the
+  # second install this line exists to prevent.)
+  guid: e474cddf-64b1-5ea6-961c-655c5864acae

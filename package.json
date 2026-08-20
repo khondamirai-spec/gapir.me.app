@@ -1,5 +1,5 @@
 {
-  "name": "whisper-uz",
+  "name": "gapir-me",
   "version": "0.2.4",
   "description": "Uzbek push-to-talk dictation — hold a hotkey, speak, get text in any app. Powered by Google Gemini.",
   "main": "./out/main/index.js",

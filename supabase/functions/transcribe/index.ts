@@ -5,6 +5,7 @@ import {
   type Language,
   type StyleSettings
 } from '../_shared/gemini.ts';
+import { countWords } from '../_shared/text.ts';
 
 /**
  * The transcription proxy — the reason this project has a server at all.
@@ -22,8 +23,12 @@ import {
  *   4. transcribe             — with a key the user never sees
  *   5. settle up              — finalize on success, refund on failure
  *
- * Step 5 is not bookkeeping. A dictation that failed must cost the user nothing, because on
- * the free tier they can see every slot they have.
+ * Step 5 is not bookkeeping. A dictation that failed must cost the user nothing, and since
+ * the quota became words per week the *shape* of step 5 changed with it: the reservation can
+ * no longer know what it is reserving, because nobody knows how many words a sentence will
+ * be until it has been spoken. So the reserve only asks "have they any words left", and the
+ * bill is written in finalize_dictation once the transcript exists. See
+ * supabase/migrations/20260820101217_weekly_word_quota.sql.
  */
 
 /** Comma-separated. A pool rather than one key for the same reason the app used to ship one:
@@ -177,28 +182,40 @@ Deno.serve(async (req) => {
   }
 
   const res = reservation as Record<string, unknown>;
+  /** Echoed on every answer below, so the Hisob pane can count up without a second round trip. */
+  const quota = {
+    plan: String(res.plan ?? 'free'),
+    used: Number(res.used ?? 0),
+    limit: Number(res.limit ?? 0),
+    resetsAt: typeof res.resets_at === 'string' ? res.resets_at : null
+  };
+
   if (res.allowed !== true) {
-    const plan = String(res.plan ?? 'free');
     if (res.reason === 'burst') {
-      return fail(429, 'Juda tez — bir necha soniya kutib turing', { plan, used: res.used, limit: res.limit });
+      return fail(429, 'Juda tez — bir necha soniya kutib turing', quota);
     }
     if (res.reason === 'no_profile') {
       return fail(403, 'Hisob topilmadi — chiqib, qaytadan kiring');
     }
-    // 402 rather than 429: this is not "wait a moment", it is "the free plan is used up for
-    // today". The app turns this into an offer to upgrade rather than a retry.
-    return fail(402, plan === 'pro'
-      ? 'Bugungi limit tugadi — ertaga yana ishlaydi'
-      : 'Bugungi bepul limit tugadi — Pro’ga o‘ting yoki ertaga urinib ko‘ring',
-      { plan, used: res.used, limit: res.limit });
+    // 402 rather than 429: this is not "wait a moment", it is "this week's words are spent".
+    // The app turns this into an offer to upgrade rather than a retry.
+    //
+    // The limit is quoted rather than described. "Haftalik limit tugadi" leaves the user
+    // wondering what the limit was; `1000 so'z` is a number they can weigh against 50 000
+    // so'm without opening another screen.
+    return fail(402, quota.plan === 'pro'
+      ? `Bu haftalik limit tugadi (${quota.limit} so‘z) — dushanbadan yana ishlaydi`
+      : `Bu haftalik bepul limit tugadi (${quota.limit} so‘z) — Pro’ga o‘ting yoki dushanbagacha kuting`,
+      quota);
   }
 
   const eventId = res.event_id as number;
-  const plan = String(res.plan ?? 'free');
-  // `used` in the reservation is the post-reservation count. When we refund the slot the
-  // honest number to show the user is one less — otherwise the Hisob pane over-reports a
-  // failed dictation as spent until the next refresh.
-  const usedIfRefunded = Math.max(0, Number(res.used ?? 0) - 1);
+  const plan = quota.plan;
+  // Words spent *before* this dictation — which is also the honest number to report if the
+  // dictation fails, because a reservation costs nothing until it is finalized. The daily
+  // counter this replaced had to subtract one here; a word quota does not, since reserving
+  // is no longer the spend.
+  const usedIfRefunded = quota.used;
 
   // --- clip cap ------------------------------------------------------------
   // plan_limits.max_clip_ms is the plan's ceiling; MAX_AUDIO_B64 above is only the transport
@@ -209,7 +226,7 @@ Deno.serve(async (req) => {
   if (maxClipMs > 0 && body.audio.length > Math.ceil((maxClipMs * 32 + 4096) / 3) * 4) {
     await db.rpc('refund_dictation', { p_event: eventId });
     return fail(400, `Yozuv juda uzun — eng ko‘pi ${Math.round(maxClipMs / 1000)} soniya`, {
-      plan, used: usedIfRefunded, limit: res.limit
+      ...quota, used: usedIfRefunded
     });
   }
 
@@ -250,30 +267,42 @@ Deno.serve(async (req) => {
     // Nothing came back, so the slot was never really used. Give it back before answering.
     await db.rpc('refund_dictation', { p_event: eventId });
     console.error(`[transcribe] user=${user.id} failed: ${lastError.message}`);
-    return fail(lastError.status, lastError.userMessage, { plan, used: usedIfRefunded, limit: res.limit });
+    return fail(lastError.status, lastError.userMessage, { ...quota, used: usedIfRefunded });
   }
 
   if (!text) {
-    // A silent clip is not a failure of ours and must not cost a slot either — the sentinel
+    // A silent clip is not a failure of ours and must not cost anything either — the sentinel
     // in _shared/gemini.ts turned an apology into an empty string, which is the honest answer.
+    // Under a word quota this case is nearly free anyway (zero words), but the reservation
+    // row still has to go, or the burst counter would treat silence as a dictation.
     await db.rpc('refund_dictation', { p_event: eventId });
-    return json({ text: '', plan, used: usedIfRefunded, limit: res.limit });
+    return json({ text: '', ...quota, used: usedIfRefunded });
   }
+
+  // What this dictation cost, in the unit the plan is denominated in. Counted here rather
+  // than in the app for the obvious reason: a client that reports its own bill reports zero.
+  // The app's copy of this function (src/shared/text.ts) must agree to the word — see
+  // src/main/word-count-drift.test.ts.
+  const words = countWords(text);
 
   await db.rpc('finalize_dictation', {
     p_event: eventId,
     p_audio_ms: body.audioMs ?? 0,
-    p_chars: text.length
+    p_chars: text.length,
+    p_words: words
   });
 
   // Deliberately **not** the transcript, unlike the equivalent line in src/main/state.ts.
   // That one prints into a log file on the speaker's own machine; this one goes into a
-  // server log we can read. Character count is enough to diagnose "it returned nothing",
-  // and is the most we have any business keeping about what someone said out loud.
+  // server log we can read. Counts are enough to diagnose "it returned nothing", and are the
+  // most we have any business keeping about what someone said out loud.
   console.log(
     `[transcribe] user=${user.id} plan=${plan} model=${MODEL} ` +
-      `audio=${((body.audioMs ?? 0) / 1000).toFixed(1)}s rtt=${Date.now() - startedAt}ms chars=${text.length}`
+      `audio=${((body.audioMs ?? 0) / 1000).toFixed(1)}s rtt=${Date.now() - startedAt}ms ` +
+      `chars=${text.length} words=${words} week=${quota.used + words}/${quota.limit}`
   );
 
-  return json({ text, plan, used: res.used, limit: res.limit });
+  // `used` counts this dictation, which the reservation could not: the quota is spent by the
+  // words that came back, not by the press of the hotkey.
+  return json({ text, ...quota, used: quota.used + words });
 });

@@ -199,13 +199,30 @@ export interface AuthUser {
   name: string;
 }
 
-/** What the user's plan entitles them to, as of the last time we asked the server. */
+/**
+ * What the user's plan entitles them to, as of the last time we asked the server.
+ *
+ * **The unit is words per week, and it used to be dictations per day.** The fields were
+ * renamed along with it rather than being left as `used`/`limit`, because a silently changed
+ * unit is the kind of thing that survives a refactor and then draws "12 / 1000" under a
+ * heading that says diktovka. Every consumer had to be visited; the compiler made sure it
+ * was. See supabase/migrations/20260820101217_weekly_word_quota.sql for why words, and why a
+ * week.
+ */
 export interface PlanSnapshot {
   plan: 'free' | 'pro';
-  /** Dictations used today. */
-  used: number;
-  /** Dictations allowed today on this plan. */
-  limit: number;
+  /** Words transcribed so far this week. */
+  wordsUsed: number;
+  /** Words allowed per week on this plan. */
+  wordLimit: number;
+  /**
+   * When the weekly allowance resets — Monday 00:00 in Tashkent — as an ISO string.
+   *
+   * Sent by the server rather than worked out here, because the boundary is Postgres's to
+   * define: a client that computed its own Monday would disagree with the one enforcing the
+   * limit for anyone whose machine clock or timezone is off, and would do it silently.
+   */
+  resetsAt: string | null;
   /** When Pro runs out, as an ISO string. Null on free. */
   expiresAt: string | null;
   /** Monthly price of Pro in tiyin — read from the server so the UI can't quote a stale one. */
@@ -237,7 +254,7 @@ export interface AccountState {
  *
  * There is no Settings box to override this any more — every install dictates on this model
  * — so the shipped default has to be one that still works on the hundredth dictation.
- * `WHISPER_UZ_GEMINI_MODEL` overrides it for development; see src/main/config.ts.
+ * `GAPIR_ME_GEMINI_MODEL` overrides it for development; see src/main/config.ts.
  */
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 

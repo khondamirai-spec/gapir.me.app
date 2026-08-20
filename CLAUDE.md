@@ -8,7 +8,7 @@ An Electron tray app for Windows: hold **Ctrl+Shift** (or whatever the user has 
 the chord is a setting now, see `Settings.hotkeys`), speak Uzbek, release, and the
 transcript is pasted into whatever app has focus. Clicking the overlay pill does the same
 hands-free — click to start, click again (or Esc) to stop. Speech goes to **Google Gemini**, not to a
-local Whisper model. Gemini is the only provider; the Aisha adapters are gone. The surviving
+local speech model. Gemini is the only provider; the Aisha adapters are gone. The surviving
 mentions of Aisha and of the user-key era — the `dropLegacyKeys()` list in
 [config.ts](src/main/config.ts) — are deliberate and must stay: `conf` preserves unknown
 keys, so without them encrypted credentials for services this app no longer contacts sit in
@@ -25,7 +25,7 @@ and the "Accounts, quota and money" section below for how it fits together.
 omission: everyone dictates on the server's key pool and on `DEFAULT_GEMINI_MODEL`. Both are
 ours to change, not the user's to change in a text box, and `Settings` in
 [types.ts](src/shared/types.ts) carries neither field. `GEMINI_API_KEY` /
-`WHISPER_UZ_GEMINI_MODEL` in a developer's `.env` bypass the server entirely so that working
+`GAPIR_ME_GEMINI_MODEL` in a developer's `.env` bypass the server entirely so that working
 on the app never spends real users' quota; a packaged build has no environment to read.
 
 **The bundled key pool is gone** (Phase 5 of the setup doc, done): the app used to ship
@@ -90,11 +90,11 @@ Node and the app dies with "Cannot read properties of undefined (reading 'app')"
 launcher also loads `.env` into the child (the main process has no `import.meta.env`, so
 `resolveGeminiKey()` reads `process.env.GEMINI_API_KEY` or `GOOGLE_API_KEY` — Google's own
 SDKs read both and people already have one or the other) and maps `--mock` / `--log-frames`
-onto `WHISPER_UZ_MOCK_STT` / `WHISPER_UZ_LOG_FRAMES`.
+onto `GAPIR_ME_MOCK_STT` / `GAPIR_ME_LOG_FRAMES`.
 
 Those env vars are a **dev convenience only**: a packaged build on someone else's machine
 sees none of them, so what ships always dictates through the proxy on `DEFAULT_GEMINI_MODEL`. The
-same goes for `WHISPER_UZ_GEMINI_MODEL` and `WHISPER_UZ_GEMINI_REALTIME`, which exist so a
+same goes for `GAPIR_ME_GEMINI_MODEL` and `GAPIR_ME_GEMINI_REALTIME`, which exist so a
 model or the Live socket can be tried without touching a settings screen that no longer has
 either control.
 
@@ -185,7 +185,7 @@ The dictation flow:
 
 ```
 hotkey 'start' ─▶ ensureVisible() + startRecording() + resolveRoute()
-                  (+ open the Live socket, only if WHISPER_UZ_GEMINI_REALTIME=1)
+                  (+ open the Live socket, only if GAPIR_ME_GEMINI_REALTIME=1)
 hotkey 'stop'  ─▶ TRANSCRIBING ─▶ addHistory() ─▶ INJECTING ─▶ DONE
 hotkey 'cancel' (Esc) ─▶ back to IDLE, nothing pasted
 ```
@@ -200,9 +200,13 @@ server at all.
 [src/shared/types.ts](src/shared/types.ts) alongside `Settings`, `StyleSettings`,
 `HistoryEntry`, `AppSection` and the `IPC` channel-name map. That file must stay
 dependency-free — it is imported by main, preload and both renderers.
-[src/shared/text.ts](src/shared/text.ts) is the same deal for word counting — today only the
-Statistika pane counts words (main's `[state]` line logs `chars=`), but the counting rule is
-product policy and lives in shared so any future counter agrees with the pane.
+[src/shared/text.ts](src/shared/text.ts) is the same deal for word counting, and it stopped
+being cosmetic when the quota became words per week: a word is a **unit of account** now, so
+that file decides what the Hisob pane says is left while its deliberate copy in
+[supabase/functions/_shared/text.ts](supabase/functions/_shared/text.ts) decides what a
+dictation actually costs. The two are held identical by
+[word-count-drift.test.ts](src/main/word-count-drift.test.ts) — see the STT adapters section
+for why a copy rather than a shared module.
 
 Load-bearing details of the flow:
 
@@ -246,10 +250,29 @@ and callable only with the service-role key; the app's `anon` key reaches nothin
 the migration is not tidiness — without it a signed-in user could call `fulfil_payme_order()`
 and give themselves a year of Pro, and RLS would not stop them.
 
+**The quota is words per week — 1000 free, 6000 on Pro — and it used to be dictations per
+day.** A dictation was never a unit of anything: "ha" and a two-minute paragraph spent one
+slot each, so the plan measured how often somebody pressed a key rather than what they got
+out of it. Words are what the user receives and what the Statistika pane already showed, and
+a week is the smallest window that survives the way writing actually happens (nothing on
+Tuesday, four thousand words on Thursday). The week starts Monday 00:00 Asia/Tashkent —
+`date_trunc('week')` is ISO — matching the day boundary's reasoning in
+[20260816084215_tashkent_day_boundary.sql](supabase/migrations/20260816084215_tashkent_day_boundary.sql).
+
+**A dictation is priced only after it exists, and that shapes the settle-up.** Nobody knows
+how many words a sentence will be until it has been spoken, so `reserve_dictation()` asks only
+"have they any words left" and `finalize_dictation()` writes down what it cost. The
+consequence is deliberate: a user with one word left still gets a whole dictation, bounded by
+`plan_limits.max_clip_ms` (two minutes, ~300 words). Don't "fix" that — refusing a five-word
+correction because the *next* clip might not fit is absurd, and truncating a transcript to fit
+takes back words the user already said out loud. It is also why `used` in the reservation is
+the count *before* this dictation, where the daily counter returned the count after.
+
 **A failed dictation costs nothing.** The usage row is inserted *before* Gemini is called (so
 two dictations racing cannot both slip past the limit) and deleted again on any failure,
 including a silent clip. A `finalized = false` row that survives is a crash, and worth
-investigating as one.
+investigating as one — under a word quota it is also a free dictation, since a row that was
+never finalized carries `words = 0`.
 
 **Nothing in the app can grant a plan.** The subscription is granted in `PerformTransaction`,
 when Payme calls us — not when the browser comes back. That is why the UI says "come back and
@@ -311,6 +334,15 @@ byte-identical prompts across every language × tone × switch — change a rule
 it fails. It is also the only thing typechecking the edge module at all, since `supabase/` is
 outside tsconfig's `include`.
 
+`src/shared/text.ts` → `supabase/functions/_shared/text.ts` is the same arrangement for the
+same reason, and the stakes are higher than they look: since the quota became words per week
+the server's copy decides what a dictation *costs* while the app's copy decides what the Hisob
+pane says is *left*. A rule changed in one and not the other doesn't produce a harmless wrong
+number — it produces a pane reading "940 / 1000 so'z" beside a server that has already refused
+the next dictation. [word-count-drift.test.ts](src/main/word-count-drift.test.ts) is what
+stops that, and its cases are the awkward ones (all five Uzbek apostrophes, Cyrillic, digits,
+hyphens) rather than the easy ones.
+
 `SttError` carries a `code` (`quota` / `auth` / `model`) when the answer changes what the
 caller should do; that is what drives key rotation.
 
@@ -343,8 +375,8 @@ setting for exactly that reason. It isn't any more: a text box that can 404 at h
 time is a support burden handed to the one person who can't fix it, and every install
 transcribing on the same known-good model is worth more than the flexibility. Changing it is
 a one-line change to `DEFAULT_GEMINI_MODEL` in [types.ts](src/shared/types.ts) plus a
-release; `WHISPER_UZ_GEMINI_MODEL` and `npm run spike -- --model` are how you find out what
-to put there. The Live API model is `WHISPER_UZ_GEMINI_LIVE_MODEL` — note its default is a
+release; `GAPIR_ME_GEMINI_MODEL` and `npm run spike -- --model` are how you find out what
+to put there. The Live API model is `GAPIR_ME_GEMINI_LIVE_MODEL` — note its default is a
 whole generation behind the batch default, because the Live API and `generateContent` do not
 carry the same model ids.
 
@@ -436,10 +468,12 @@ is no credential in it), `auth.json` (the Supabase session, **encrypted** with `
 `history.json`, and `logs\main.log`.
 
 It was `%APPDATA%\whisper-uz\` until [app-paths.ts](src/main/app-paths.ts), because Electron
-names the folder after `package.json`'s `name` and this package is still called `whisper-uz` —
-renaming *that* would move the appId, the update feed and the installer's upgrade path with
-it. So the paths are named instead, and the old folder is moved across once on the first
-launch after the update. Two things follow. **That module must stay the first import in
+names the folder after `package.json`'s `name` and this package carried its first name long
+after the program had changed. Both are corrected now — the package is `gapir-me` and
+`app-paths.ts` pins the folder rather than leaving it inferred — and the old folder is moved
+across once on the first launch after the update. **`LEGACY_FOLDER` in that file is the only
+mention of the old name left in the app, and it is what erases it from disk; don't tidy it
+away.** Two things follow. **That module must stay the first import in
 [index.ts](src/main/index.ts)**: ES modules evaluate in import order and `config.ts` builds
 its store while being imported, so moving the line down silently sends everything back to the
 old folder. And a packaged build and `npm run dev` still share the folder — and the same
@@ -469,8 +503,8 @@ still completes and the only symptom is the missing page. See `AUTH_REDIRECT` in
 [supabase-config.ts](src/main/supabase-config.ts).
 
 **Two different messages mean "out of quota" and they are not the same failure.** `plan` (a
-402 from our server) is the *user's* daily allowance running out, and the answer is an offer
-to upgrade. `quota` (a 429) is a key of *ours* being spent, which the user can do nothing
+402 from our server) is the *user's* own weekly word allowance running out, and the answer is
+an offer to upgrade. `quota` (a 429) is a key of *ours* being spent, which the user can do nothing
 about. `SttErrorCode` keeps them apart on purpose; collapsing them would show an upgrade
 button for our outage.
 
@@ -505,7 +539,13 @@ look like mistakes to anyone tidying up — read it before simplifying any of:
   The chords themselves are settings, validated by [hotkeys.ts](src/shared/hotkeys.ts): a
   chord needs a modifier and at most one ordinary key, or it would fire while somebody typed
 - the welcome flow refusing to finish until the user is signed in. The app cannot transcribe
-  a word without an account, so a setup that skipped that step finished into a dead end
+  a word without an account, so a setup that skipped that step finished into a dead end. Its
+  second step, `Reja`, is the opposite kind of screen — an offer with nothing to decide, whose
+  forward button reads *Bepul davom etish*. It sits directly after sign-in because that is the
+  only moment an offer to pay is neither premature (no account to attach it to) nor an
+  imposition (five minutes into a setup). Every step is named by a `STEP_*` constant in
+  [app.ts](src/renderer/app/app.ts) rather than a number, because inserting it moved four
+  others and every literal would have gone on compiling while pointing at the wrong screen
 - not using Electron's `globalShortcut`
 - `showInactive()` + `focusable: false` + a window that never resizes to fit a bigger pill
   ([overlay.ts](src/main/overlay.ts)) — it does *move*, though: holding the pill drags the
@@ -624,6 +664,16 @@ the anon key grants nothing but "read your own rows". Ship them empty and `isCon
 false, nobody can sign in or pay, and every dictation fails — there is no client-side
 fallback any more.
 
+**`appId` and `nsis.guid` in [electron-builder.yml](electron-builder.yml) are a pair, and the
+guid must never change.** Windows identifies an installed app by a GUID that electron-builder
+derives from `appId`, so renaming the appId — as happened on 2026-08-20, when
+`uz.whisperuz.app` became `me.gapir.app` — would otherwise make the next installer treat every
+existing install as a different program: two entries in Add/Remove Programs, two Start Menu
+shortcuts, one confused user. The guid is pinned to the value the shipped v0.2.4 installer
+registered, and the file shows the one-line derivation that proves it. `app.setAppUserModelId`
+in [index.ts](src/main/index.ts) must keep matching `appId` exactly — it is what groups the
+taskbar button with the shortcut.
+
 `protocols:` in [electron-builder.yml](electron-builder.yml) is what registers the
 `gapirme://` scheme with the installer. Without it sign-in works perfectly in dev — where
 `registerProtocol()` claims the scheme at runtime — and silently does nothing on a packaged
@@ -632,8 +682,11 @@ build, which is the worst possible place for that gap.
 **The backend is deployed separately from the app.** A change under `supabase/` reaches users
 through `supabase db push` / `supabase functions deploy`, not through a release; a released
 build talks to whatever is deployed. That decoupling is mostly a gift — the model, the price
-and the daily limits all change without a release — but it means a breaking change to the
-Edge Function's request shape strands every installed copy until they update.
+and the weekly word limits are all rows or secrets that change without a release — but it
+means a breaking change to the Edge Function's request shape strands every installed copy
+until they update. It cuts the other way too: applying a migration that changes what
+`finalize_dictation()` expects, and *not* redeploying `transcribe`, is how every dictation
+silently comes to cost zero words.
 
 The `repository` field in `package.json` is what electron-builder and electron-updater infer
 owner and repo from, so it has to match the repo the releases actually live in.

@@ -20,7 +20,10 @@ import {
  * That is what makes a paid plan enforceable. A key handed to the client is a key the client
  * can keep, so gating it behind a subscription would be a request rather than a rule. Here
  * the quota is checked in Postgres by a function the app cannot call
- * (supabase/migrations/0001_init.sql), and no amount of tampering with this file changes it.
+ * (supabase/migrations/20260820101217_weekly_word_quota.sql), and no amount of tampering with
+ * this file changes it. What it counts is **words per week** — 1000 free, 6000 on Pro — taken
+ * from the transcript the server produced rather than from anything this process says about
+ * it, for the obvious reason that a client asked to report its own bill reports zero.
  *
  * What it costs, stated where someone will find it: an extra hop. The clip goes to Supabase
  * before it goes to Google, which is a few hundred milliseconds on a typical connection, and
@@ -45,17 +48,27 @@ const MAX_PCM_BYTES = 2 * 60 * SAMPLE_RATE * BYTES_PER_SAMPLE;
  */
 const REQUEST_TIMEOUT_MS = 90_000;
 
+/**
+ * What the Edge Function answers with — on success and on failure alike.
+ *
+ * `used` / `limit` are **words this week**, not dictations today; they carry the server's
+ * own field names because that is what
+ * supabase/functions/transcribe/index.ts puts on the wire. Every response carries them,
+ * including the 402 and the refunded ones, which is what lets the Hisob pane be right after
+ * a failed dictation without asking again.
+ */
 interface ProxyResponse {
   text?: string;
   error?: string;
   plan?: string;
   used?: number;
   limit?: number;
+  resetsAt?: string | null;
 }
 
 /** The HTTP status, classified into what the caller can actually act on. */
 function errorCode(status: number): SttErrorCode | undefined {
-  // 402 is the paywall: the user's own daily allowance, not a key of ours being spent.
+  // 402 is the paywall: the user's own weekly allowance, not a key of ours being spent.
   if (status === 402) return 'plan';
   if (status === 429) return 'quota';
   if (status === 401 || status === 403) return 'auth';
@@ -120,10 +133,17 @@ class ProxySession implements SttSession {
       throw new SttError('Server tushunarsiz javob qaytardi', true);
     }
 
-    // The server counts the dictations, so its numbers are the true ones — feeding them back
-    // here is what keeps the Hisob pane counting up as you speak rather than only on open.
+    // The server counts the words, so its numbers are the true ones — feeding them back here
+    // is what keeps the Hisob pane counting up as you speak rather than only on open. Done
+    // before the `res.ok` check on purpose: a 402 is precisely the moment the pane most needs
+    // to be right, and the server sends the same figures with it.
     if (body.plan && typeof body.used === 'number' && typeof body.limit === 'number') {
-      notePlanUsage(body.plan === 'pro' ? 'pro' : 'free', body.used, body.limit);
+      notePlanUsage({
+        plan: body.plan === 'pro' ? 'pro' : 'free',
+        wordsUsed: body.used,
+        wordLimit: body.limit,
+        resetsAt: typeof body.resetsAt === 'string' ? body.resetsAt : null
+      });
     }
 
     if (!res.ok) {

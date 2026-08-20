@@ -16,7 +16,7 @@ import { SttError, type SttAdapter, type SttSession, type SttSessionOptions } fr
  *  1. The Live API is built for conversation, not dictation. The model on the other end
  *     wants to reply to you; we are paying it to keep quiet and hand over the ASR track.
  *  2. Live model ids churn faster than any other part of Google's surface, and a wrong one
- *     is a setup failure at hotkey-press time. Hence WHISPER_UZ_GEMINI_LIVE_MODEL, and
+ *     is a setup failure at hotkey-press time. Hence GAPIR_ME_GEMINI_LIVE_MODEL, and
  *     hence `npm run spike -- --models` to list what a key can actually reach.
  *  3. Live pricing is not the same bargain as batch audio tokens.
  *
@@ -30,7 +30,7 @@ const WS_URL =
   'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 /** Overridable without a rebuild — see reason 2 above. */
-const LIVE_MODEL = process.env.WHISPER_UZ_GEMINI_LIVE_MODEL || 'gemini-2.0-flash-live-001';
+const LIVE_MODEL = process.env.GAPIR_ME_GEMINI_LIVE_MODEL || 'gemini-2.0-flash-live-001';
 
 const OPEN_TIMEOUT_MS = 5_000;
 const FINAL_TIMEOUT_MS = 15_000;
@@ -177,7 +177,7 @@ class GeminiLiveSession implements SttSession {
   private onMessage(data: WebSocket.RawData): void {
     const raw = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
 
-    if (process.env.WHISPER_UZ_LOG_FRAMES === '1') {
+    if (process.env.GAPIR_ME_LOG_FRAMES === '1') {
       console.log('[gemini-live] <-', raw.slice(0, 500));
     }
 

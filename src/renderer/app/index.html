@@ -567,7 +567,7 @@
         transition: width 0.35s var(--ease);
       }
 
-      /* Two thirds through the day's allowance is the moment to say so, rather than at the
+      /* Two thirds through the week's allowance is the moment to say so, rather than at the
          wall — someone mid-document deserves warning while they can still act on it. */
       .acc-bar i.low {
         background: #c4703a;
@@ -582,6 +582,41 @@
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
+      }
+
+      /* ---- the weekly allowance, on the Statistika pane ----
+         Its own card above the grid rather than a fourth metric tile: the tiles are
+         retrospective ("you have said 40 000 words"), and this one is the only figure on the
+         pane that decides whether the next dictation will work at all. */
+      .quota-card {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .quota-figure {
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+        flex-wrap: wrap;
+      }
+
+      .quota-figure .figure {
+        line-height: 1;
+      }
+
+      .quota-figure span {
+        color: var(--ink-3);
+        font-size: 13px;
+      }
+
+      .quota-actions {
+        display: flex;
+      }
+
+      .quota-actions.hidden {
+        display: none;
       }
 
       .acc-empty {
@@ -2253,6 +2288,89 @@
         color: var(--ink-3);
       }
 
+      /* ---- plans ----
+         Two cards side by side, and the free one is drawn as *chosen* rather than as the
+         lesser option: the user already has it, and a screen that greys out what somebody
+         already owns in order to sell them something else is the kind of thing that gets an
+         installer uninstalled. Pro carries the only button. */
+      .w-plans {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      @media (max-width: 560px) {
+        .w-plans {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .w-plan {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 16px 18px;
+        border: 1.5px solid var(--line);
+        border-radius: 14px;
+        background: var(--card);
+      }
+
+      .w-plan.on {
+        border-color: var(--accent);
+      }
+
+      .w-plan.pro {
+        background: var(--card-2);
+      }
+
+      .w-plan-head {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+
+      .w-plan-head b {
+        font-family: var(--font-display);
+        font-size: 18px;
+      }
+
+      .w-plan-price {
+        display: flex;
+        align-items: baseline;
+        gap: 5px;
+      }
+
+      .w-plan-price b {
+        font-family: var(--font-display);
+        font-size: 26px;
+        line-height: 1;
+      }
+
+      .w-plan-price span {
+        font-size: 12px;
+        color: var(--ink-3);
+      }
+
+      .w-plan ul {
+        margin: 0;
+        padding-left: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+
+      .w-plan ul b {
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      .w-plan .btn {
+        align-self: flex-start;
+        margin-top: 2px;
+      }
+
       /* ---- language ---- */
       .w-chips {
         display: flex;
@@ -2640,7 +2758,11 @@
         <section class="view" data-view="insights">
           <div class="view-head">
             <h1>Statistika</h1>
-            <p>Hammasi shu kompyuterdagi tarixdan hisoblanadi — hech qayerga yuborilmaydi.</p>
+            <p>
+              Raqamlar shu kompyuterdagi tarixdan hisoblanadi — matn hech qayerga
+              yuborilmaydi. Haftalik limit esa serverdan olinadi, chunki uni hisoblaydigan
+              joy o‘sha.
+            </p>
           </div>
           <div class="tabs" role="tablist" id="insightTabs">
             <button class="tab on" data-tab="usage" role="tab" aria-selected="true">
@@ -2651,6 +2773,29 @@
           <div class="scroll">
             <!-- Foydalanish: how much, and when. -->
             <div class="tab-pane on" data-tab="usage">
+              <!-- The one card on this pane that is NOT arithmetic over history.json.
+                   The weekly allowance is counted on the server, because the server is what
+                   enforces it — and a pane that computed its own figure would be wrong for
+                   anyone who turned history off, cleared it, or dictates from a second
+                   machine, in the one place where being wrong looks like being cheated. It
+                   is drawn first because "how much have I got left" is the question people
+                   open this pane with. -->
+              <div class="card pad quota-card" id="quotaCard">
+                <div class="panel-head">
+                  <h2>Bu hafta</h2>
+                  <span class="panel-note" id="quotaPlan"></span>
+                </div>
+                <div class="quota-figure">
+                  <b class="figure" id="quotaUsed">0</b>
+                  <span id="quotaOf"></span>
+                </div>
+                <div class="acc-bar"><i id="quotaBar"></i></div>
+                <p class="hint" id="quotaNote" style="margin: 0"></p>
+                <div class="quota-actions" id="quotaActions">
+                  <button class="btn small" id="quotaUpgrade">Pro’ga o‘tish</button>
+                </div>
+              </div>
+
               <div class="insight-grid">
                 <div class="card pad metric">
                   <b class="figure" id="statWpm">0</b>
@@ -2858,8 +3003,8 @@
             <div class="card acc-empty" id="accountSignedOut">
               <h2>Google bilan kiring</h2>
               <p>
-                Kirgandan so‘ng har kuni bepul diktovka qilish mumkin. Brauzer ochiladi — parolni
-                shu yerga emas, Google’ning o‘z sahifasiga kiritasiz.
+                Kirgandan so‘ng har hafta 1000 so‘z bepul. Brauzer ochiladi — parolni shu
+                yerga emas, Google’ning o‘z sahifasiga kiritasiz.
               </p>
               <button class="btn" id="accSignIn">
                 <svg class="g-mark" viewBox="0 0 48 48" aria-hidden="true">
@@ -2947,11 +3092,12 @@
                 </p>
               </div>
               <div class="help-item">
-                <b>«Bugungi limit tugadi» deb yozdi</b>
+                <b>«Haftalik limit tugadi» deb yozdi</b>
                 <p>
-                  Har bir hisobning kunlik chegarasi bor. Qancha ishlatganingiz «Hisob»
-                  bo‘limida ko‘rinadi. Chegara har kuni yarim tunda yangilanadi — ertaga hech
-                  narsa qilmasdan yana ishlaydi. Ko‘proq kerak bo‘lsa, Pro’ga o‘tish mumkin.
+                  Limit aytilgan so‘z bilan o‘lchanadi: bepul rejada haftasiga 1000 so‘z,
+                  Pro’da 6000. Qancha ishlatganingiz «Hisob» va «Statistika» bo‘limlarida
+                  ko‘rinadi. Har dushanba yarim tunda yangilanadi — hech narsa qilmasdan yana
+                  ishlaydi. Ertaroq kerak bo‘lsa, Pro’ga o‘tish mumkin.
                 </p>
               </div>
               <div class="help-item">
@@ -2978,9 +3124,13 @@
     </div>
 
     <!-- ============================== welcome ==============================
-         Five steps, one to a screen, in the order the app needs them: an account (without
-         which nothing can be transcribed at all), a microphone, a language, the keys, and
-         one real dictation to prove the four of them work together.
+         Seven steps, one to a screen, in the order the app needs them: an account (without
+         which nothing can be transcribed at all), what that account costs, a microphone, a
+         language, the keys, and one real dictation to prove the rest work together.
+
+         No copy anywhere counts them out loud. It said "Besh qadam" until the plan step was
+         added, at which point the very first sentence of the app was wrong — and a number
+         that has to be edited in two files to stay true is a number not worth printing.
 
          Every step's markup is here and only one carries `.on`; app.ts moves the class. The
          steps are numbered from 0 in `data-step` so the code can index the rail with the
@@ -2999,8 +3149,9 @@
             <img class="w-mark" src="../assets/logo.png" alt="gapir me" />
             <h1>gapir me ga xush kelibsiz</h1>
             <p class="lead">
-              Besh qadam — keyin xohlagan dasturda gapirasiz, matn o‘zi yoziladi. Diktovka
-              ilovaning serveri orqali ishlaydi, shuning uchun avval hisobga kirasiz.
+              Bir necha qadam — keyin xohlagan dasturda gapirasiz, matn o‘zi yoziladi.
+              Diktovka ilovaning serveri orqali ishlaydi, shuning uchun avval hisobga
+              kirasiz.
             </p>
 
             <div class="w-card">
@@ -3064,8 +3215,57 @@
             </div>
           </div>
 
-          <!-- ---------------------------- 1. mikrofon ------------------------------ -->
+          <!-- ------------------------------- 1. reja ------------------------------- -->
+          <!-- Shown the moment the account exists, and not before: an offer to pay is only
+               honest once there is something to attach the payment to. It is a full step
+               rather than a banner because the choice deserves a screen — but the forward
+               button says "Bepul davom etish", so the free tier is the path of least
+               resistance and nobody is cornered into a card form to finish setup. -->
           <div class="w-step" data-step="1">
+            <h2>Qancha gapirasiz?</h2>
+            <p class="lead">
+              Limit aytilgan so‘z bilan o‘lchanadi va har dushanba yangilanadi. Hozir
+              tanlamasangiz ham bo‘ladi — keyin «Hisob» bo‘limidan o‘zgartirasiz.
+            </p>
+
+            <div class="w-plans">
+              <div class="w-plan on">
+                <div class="w-plan-head">
+                  <b>Bepul</b>
+                  <span class="badge">Hozir</span>
+                </div>
+                <div class="w-plan-price"><b>0</b><span>so‘m</span></div>
+                <ul>
+                  <li><b>1 000</b> so‘z / hafta</li>
+                  <li>O‘zbek, rus va ingliz tili</li>
+                  <li>Bitta yozuv 2 daqiqagacha</li>
+                </ul>
+              </div>
+
+              <div class="w-plan pro">
+                <div class="w-plan-head">
+                  <b>Pro</b>
+                  <span class="badge new">6x ko‘p</span>
+                </div>
+                <div class="w-plan-price"><b id="wProPrice">—</b><span>/ oy</span></div>
+                <ul>
+                  <li><b>6 000</b> so‘z / hafta</li>
+                  <li>Kuniga taxminan 15–20 sahifa</li>
+                  <li>Tezroq navbat, bir xil sifat</li>
+                </ul>
+                <button class="btn small" id="wUpgrade">Pro’ga o‘tish</button>
+              </div>
+            </div>
+
+            <p class="note">
+              To‘lov Payme orqali, brauzerda. To‘lagandan so‘ng «Hisob» bo‘limida «Yangilash»
+              tugmasini bosing — reja o‘shanda ochiladi.
+            </p>
+            <p class="msg" id="wPlanMsg"></p>
+          </div>
+
+          <!-- ---------------------------- 2. mikrofon ------------------------------ -->
+          <div class="w-step" data-step="2">
             <h2>Mikrofonni tekshiramiz</h2>
             <p class="lead">
               Noutbukning o‘z mikrofoni yoki simli naushnik eng ishonchli. Bluetooth
@@ -3095,8 +3295,8 @@
             </div>
           </div>
 
-          <!-- ------------------------------- 2. til -------------------------------- -->
-          <div class="w-step" data-step="2">
+          <!-- ------------------------------- 3. til -------------------------------- -->
+          <div class="w-step" data-step="3">
             <h2>Qaysi tilda gapirasiz?</h2>
             <p class="lead">
               Diktovka shu tilda eshitiladi va shu tilda yoziladi. Keyinroq Sozlamalardan
@@ -3113,8 +3313,8 @@
             </div>
           </div>
 
-          <!-- ----------------------------- 3. tugmalar ----------------------------- -->
-          <div class="w-step" data-step="3">
+          <!-- ----------------------------- 4. tugmalar ----------------------------- -->
+          <div class="w-step" data-step="4">
             <h2>Tugmalarni sinab ko‘ring</h2>
             <p class="lead" id="wKeysLead"></p>
 
@@ -3132,8 +3332,8 @@
             </div>
           </div>
 
-          <!-- ------------------------------ 4. sinov ------------------------------- -->
-          <div class="w-step" data-step="4">
+          <!-- ------------------------------ 5. sinov ------------------------------- -->
+          <div class="w-step" data-step="5">
             <h2>Endi bir marta gapirib ko‘ring</h2>
             <p class="lead" id="wTryLead"></p>
 
@@ -3147,8 +3347,8 @@
             </div>
           </div>
 
-          <!-- ------------------------------ 5. tayyor ------------------------------ -->
-          <div class="w-step" data-step="5">
+          <!-- ------------------------------ 6. tayyor ------------------------------ -->
+          <div class="w-step" data-step="6">
             <h2>Tayyor</h2>
             <p class="lead">
               Ilova traydagi belgida va ekran chetidagi kichkina belgida yashaydi. Oynani
@@ -3162,6 +3362,7 @@
 
               <dl class="w-summary">
                 <div><dt>Hisob</dt><dd id="wSumAccount">—</dd></div>
+                <div><dt>Reja</dt><dd id="wSumPlan">—</dd></div>
                 <div><dt>Mikrofon</dt><dd id="wSumMic">—</dd></div>
                 <div><dt>Til</dt><dd id="wSumLang">—</dd></div>
                 <div><dt>Tugmalar</dt><dd id="wSumKeys">—</dd></div>
@@ -3486,8 +3687,9 @@
                   <b>Server nimani biladi</b>
                   <span>
                     Kirganingizda Google e-pochtangiz va ismingiz saqlanadi. Har bir diktovkadan
-                    serverda faqat vaqti, yozuv uzunligi va belgilar soni qoladi — kunlik limit
-                    shundan hisoblanadi. Boshqa hech qanday kuzatuv yo‘q.
+                    serverda faqat vaqti, yozuv uzunligi, belgilar va so‘zlar soni qoladi —
+                    haftalik limit shundan hisoblanadi. Matnning o‘zi saqlanmaydi. Boshqa hech
+                    qanday kuzatuv yo‘q.
                   </span>
                 </div>
               </div>

@@ -13,24 +13,34 @@ import { app } from 'electron';
  *
  * ## Why there was an old folder
  *
- * The package is named `whisper-uz` — the name it had when it ran Whisper locally, which it
- * has not done for a long time — and `app.getName()` falls back to `package.json#name`. So
- * every install has been writing settings, history, the session and the logs to
- * `%APPDATA%\whisper-uz` while calling itself "gapir me" everywhere a user could see. One
- * product, two identities, and the one on disk was the name of a thing that no longer
- * exists. Renaming the package would fix the folder and break the appId, the update feed and
- * the installer's upgrade path, all of which key off the name; naming the *paths* here
- * fixes the folder and touches nothing else.
+ * This app began as a different program with a different name, and the name outlived it: the
+ * npm package stayed `whisper-uz` long after the local model it referred to was gone, and
+ * `app.getName()` falls back to `package.json#name`. So every build up to v0.2.4 wrote its
+ * settings, history, session and logs to `%APPDATA%\whisper-uz` while calling itself
+ * "gapir me" everywhere a user could see — one product, two identities, and the one on disk
+ * was the name of a thing that no longer existed.
  *
- * The migration below is what makes that a rename rather than a reset: without it, everyone
- * who updates is silently signed out, loses their history and gets the welcome flow again,
- * with their real data sitting in a folder nothing will ever open.
+ * Both halves are fixed now: the package is `gapir-me`, and `setName()` below pins the
+ * folder rather than leaving it to be inferred. What remains is the one-way trip for
+ * everyone who installed before that, which is what `migrate()` is.
+ *
+ * That trip is what makes this a rename rather than a reset. Without it everyone who updates
+ * is silently signed out, loses their history and gets the welcome flow again, with their
+ * real data sitting in a folder nothing will ever open.
  */
 
 /** The one folder this app owns. Matches `productName` in electron-builder.yml. */
 export const APP_FOLDER = 'gapir me';
 
-/** The folder every build before this one wrote to. Only read, and only once. */
+/**
+ * The folder every build up to v0.2.4 wrote to. Read once, renamed away, never written.
+ *
+ * **The last place the old name appears in this app, and it is here in order to erase it.**
+ * Deleting the constant does not fail loudly — it just stops the migration, stranding the
+ * history and the session of everyone who installed before the rename in a folder nothing
+ * opens. When enough releases have passed that no unmigrated install is plausibly still out
+ * there, this and `migrate()` can go together; until then, leave it.
+ */
 const LEGACY_FOLDER = 'whisper-uz';
 
 /**

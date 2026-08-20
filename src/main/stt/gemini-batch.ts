@@ -355,7 +355,7 @@ class GeminiBatchSession implements SttSession {
       throw new SttError('Yozuv juda uzun — qisqaroq gapirib ko‘ring', false);
     }
     if (result.text === null) {
-      if (process.env.WHISPER_UZ_LOG_FRAMES === '1') {
+      if (process.env.GAPIR_ME_LOG_FRAMES === '1') {
         console.log('[gemini-batch] <-', JSON.stringify(json).slice(0, 1000));
       }
       return '';

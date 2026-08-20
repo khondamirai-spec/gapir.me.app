@@ -58,7 +58,7 @@ export const APP_CALLBACK = `${AUTH_PROTOCOL}://auth-callback`;
  * one more thing that can drop a query string.
  */
 export const AUTH_REDIRECT =
-  process.env.WHISPER_UZ_AUTH_REDIRECT || 'https://www.gapir.me/auth/callback';
+  process.env.GAPIR_ME_AUTH_REDIRECT || 'https://www.gapir.me/auth/callback';
 
 export const TRANSCRIBE_URL = `${SUPABASE_URL}/functions/v1/transcribe`;
 

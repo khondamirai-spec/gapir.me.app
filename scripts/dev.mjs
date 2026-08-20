@@ -18,7 +18,7 @@ delete env.ELECTRON_RUN_AS_NODE;
 // Load .env into the child's environment. Electron's main process doesn't get Vite's
 // import.meta.env, so `resolveGeminiKey()` reads process.env.GEMINI_API_KEY (or
 // GOOGLE_API_KEY — Google's own SDKs read both and people already have one or the other)
-// instead, which means the values have to be injected here. WHISPER_UZ_GEMINI_LIVE_MODEL
+// instead, which means the values have to be injected here. GAPIR_ME_GEMINI_LIVE_MODEL
 // rides along the same way: it is how you try a different Live API model without a rebuild.
 if (existsSync('.env')) {
   for (const line of readFileSync('.env', 'utf8').split(/\r?\n/)) {
@@ -34,7 +34,7 @@ const args = process.argv.slice(2);
 const mockIndex = args.indexOf('--mock');
 if (mockIndex !== -1) {
   args.splice(mockIndex, 1);
-  env.WHISPER_UZ_MOCK_STT = '1';
+  env.GAPIR_ME_MOCK_STT = '1';
   console.log('[dev] mock STT enabled — transcripts are fake');
 }
 
@@ -43,7 +43,7 @@ if (mockIndex !== -1) {
 const framesIndex = args.indexOf('--log-frames');
 if (framesIndex !== -1) {
   args.splice(framesIndex, 1);
-  env.WHISPER_UZ_LOG_FRAMES = '1';
+  env.GAPIR_ME_LOG_FRAMES = '1';
   console.log('[dev] logging raw STT frames');
 }
 

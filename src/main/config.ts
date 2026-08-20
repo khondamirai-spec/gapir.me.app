@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import Store from 'electron-store';
 import { app } from 'electron';
 import { sanitizeHotkeys, type HotkeySettings } from '@shared/hotkeys';
@@ -67,6 +68,63 @@ function dropLegacyKeys(): void {
 }
 
 dropLegacyKeys();
+
+/**
+ * The name Windows knew this app by before 2026-08-20.
+ *
+ * Electron names the "run at login" registry value after the **AppUserModelId**, not after
+ * `app.getName()` — verifiable on any machine that had an old build: the value under
+ * `HKCU\...\CurrentVersion\Run` was literally `uz.whisperuz.app`. So renaming the appId
+ * (see electron-builder.yml) moves the name Electron looks under, and every entry written by
+ * an older build becomes unreachable: `setLoginItemSettings({ openAtLogin: false })` deletes
+ * the *new* name and leaves the old one behind forever.
+ *
+ * That is not a cosmetic leak. The stranded entry points at the executable path of whatever
+ * install wrote it — on the machine this was found on, a `Programs\Whisper UZ\` directory
+ * that no longer exists — so Windows tries to start a missing program at every login, and
+ * turning the setting off in the app does nothing about it.
+ */
+const LEGACY_AUTOSTART_NAME = 'uz.whisperuz.app';
+
+/**
+ * Remove the autostart entry an older build left under the old AppUserModelId.
+ *
+ * Shelling out to `reg` because Electron exposes no registry API and
+ * `setLoginItemSettings` can only address the current AUMID — which is precisely the thing
+ * that changed. `reg` is present on every Windows install, exits non-zero when the value is
+ * already gone (the common case, and not worth a line in the log), and can do nothing worse
+ * than fail: the value name is a constant, never anything a user typed.
+ *
+ * Deliberately not awaited and never allowed to throw. A leftover registry value is worth
+ * cleaning up; it is not worth a main process that fails to start.
+ */
+export function dropLegacyAutostart(): void {
+  if (process.platform !== 'win32') return;
+  try {
+    const child = spawn(
+      'reg',
+      [
+        'delete',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+        '/v',
+        LEGACY_AUTOSTART_NAME,
+        '/f'
+      ],
+      { windowsHide: true, stdio: 'ignore' }
+    );
+    child.on('error', () => {
+      /* `reg` missing is not a thing worth reporting, or recovering from. */
+    });
+    child.on('exit', (code) => {
+      // 0 means a value was actually deleted, which happens exactly once per machine and is
+      // worth saying — a login that stopped trying to launch a deleted executable is the kind
+      // of thing someone will otherwise notice and wonder about.
+      if (code === 0) console.log(`[config] removed the stale "${LEGACY_AUTOSTART_NAME}" autostart entry`);
+    });
+  } catch {
+    /* see above */
+  }
+}
 
 /**
  * Settings that were written by an older build, or hand-edited, can be missing fields or
@@ -146,7 +204,7 @@ export function setSettings(patch: Partial<Settings>): void {
  * packaged build on someone else's machine sees neither.
  */
 export function geminiModel(): string {
-  return process.env.WHISPER_UZ_GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  return process.env.GAPIR_ME_GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 }
 
 /**
@@ -157,7 +215,7 @@ export function geminiModel(): string {
  * src/main/stt/gemini-live.ts.
  */
 export function geminiRealtimeEnabled(): boolean {
-  return process.env.WHISPER_UZ_GEMINI_REALTIME === '1';
+  return process.env.GAPIR_ME_GEMINI_REALTIME === '1';
 }
 
 /**

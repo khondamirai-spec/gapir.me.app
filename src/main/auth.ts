@@ -193,10 +193,14 @@ export async function refreshPlan(): Promise<PlanSnapshot | null> {
     const { data, error } = await supabase().rpc('account_snapshot');
     if (error) throw new Error(error.message);
     const raw = (data ?? {}) as Record<string, unknown>;
+    // `used` / `limit` keep their server-side names — the snapshot is jsonb built by
+    // account_snapshot() and renaming its keys would be a migration for no gain — but they
+    // are words per week on both sides of this line. See PlanSnapshot.
     const plan: PlanSnapshot = {
       plan: raw.plan === 'pro' ? 'pro' : 'free',
-      used: Number(raw.used ?? 0),
-      limit: Number(raw.limit ?? 0),
+      wordsUsed: Number(raw.used ?? 0),
+      wordLimit: Number(raw.limit ?? 0),
+      resetsAt: typeof raw.resets_at === 'string' ? raw.resets_at : null,
       expiresAt: typeof raw.expires_at === 'string' ? raw.expires_at : null,
       priceTiyin: Number(raw.price_tiyin ?? 0)
     };
@@ -213,13 +217,24 @@ export async function refreshPlan(): Promise<PlanSnapshot | null> {
 /**
  * Told by the dictation path what the server just said, so the Hisob pane counts up as you
  * speak instead of only when the window is opened.
+ *
+ * The server is the authority on all four numbers — it is the thing that enforces them — so
+ * this overwrites rather than adds. The app never increments the count itself: a client that
+ * kept its own running total would drift the moment a dictation was refunded, and it is the
+ * refund cases (a failed request, a silent clip) that a user notices, because those are the
+ * ones where they expect to have been charged nothing.
  */
-export function notePlanUsage(plan: 'free' | 'pro', used: number, limit: number): void {
+export function notePlanUsage(usage: {
+  plan: 'free' | 'pro';
+  wordsUsed: number;
+  wordLimit: number;
+  resetsAt: string | null;
+}): void {
   if (!state.plan) {
-    emit({ plan: { plan, used, limit, expiresAt: null, priceTiyin: 0 } });
+    emit({ plan: { ...usage, expiresAt: null, priceTiyin: 0 } });
     return;
   }
-  emit({ plan: { ...state.plan, plan, used, limit } });
+  emit({ plan: { ...state.plan, ...usage } });
 }
 
 // ------------------------------------------------------------------ session
