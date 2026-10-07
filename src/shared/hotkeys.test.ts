@@ -4,6 +4,7 @@ import {
   chordProblem,
   DEFAULT_HOTKEYS,
   formatChord,
+  pasteShortcut,
   isBindable,
   keyNameFromCode,
   pushToTalkWarning,
@@ -148,8 +149,25 @@ describe('sanitizeHotkeys', () => {
 
 describe('formatChord', () => {
   it('writes the keys the way they are written on a keyboard', () => {
-    expect(formatChord(['Ctrl', 'Shift'])).toBe('Ctrl + Shift');
-    expect(formatChord(['Ctrl', 'Win', 'Space'])).toBe('Ctrl + Win + Space');
-    expect(formatChord(['Ctrl', 'Comma'])).toBe('Ctrl + ,');
+    expect(formatChord(['Ctrl', 'Shift'], 'win32')).toBe('Ctrl + Shift');
+    expect(formatChord(['Ctrl', 'Win', 'Space'], 'win32')).toBe('Ctrl + Win + Space');
+    expect(formatChord(['Ctrl', 'Comma'], 'win32')).toBe('Ctrl + ,');
+  });
+
+  it('names the keys a Mac keyboard actually has', () => {
+    expect(formatChord(['Ctrl', 'Shift'], 'darwin')).toBe('Control + Shift');
+    expect(formatChord(['Alt', 'Win', 'Space'], 'darwin')).toBe('Option + Command + Space');
+  });
+
+  it('calls the Windows key Super on Linux', () => {
+    expect(formatChord(['Ctrl', 'Win'], 'linux')).toBe('Ctrl + Super');
+  });
+});
+
+describe('pasteShortcut', () => {
+  it('is ⌘V on a Mac and Ctrl+V everywhere else', () => {
+    expect(pasteShortcut('darwin')).toBe('⌘V');
+    expect(pasteShortcut('win32')).toBe('Ctrl+V');
+    expect(pasteShortcut('linux')).toBe('Ctrl+V');
   });
 });

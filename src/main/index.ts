@@ -14,9 +14,17 @@ import {
   ipcMain,
   nativeImage,
   shell,
-  dialog
+  dialog,
+  type MenuItemConstructorOptions
 } from 'electron';
-import { IPC, type AppSection, type Settings } from '@shared/types';
+import {
+  IPC,
+  PAID_PLANS,
+  type AppSection,
+  type PaidPlan,
+  type PermissionsState,
+  type Settings
+} from '@shared/types';
 import {
   beginDrag,
   createOverlay,
@@ -29,7 +37,7 @@ import {
 import { hotkey } from './hotkey';
 import { formatChord } from '@shared/hotkeys';
 import { dictation } from './state';
-import { dropLegacyAutostart, getSettings, setSettings } from './config';
+import { applyLaunchAtLogin, dropLegacyAutostart, getSettings, setSettings } from './config';
 import { refreshDevices } from './audio';
 import {
   clearHistory,
@@ -50,6 +58,16 @@ import {
   signOut
 } from './auth';
 import { openCheckout } from './billing';
+import {
+  accessibilityGranted,
+  isWayland,
+  microphoneStatus,
+  openPrivacySettings,
+  requestMicrophone,
+  stopPermissionWatch,
+  whenAccessibilityGranted
+} from './permissions';
+import { installAppImageEntry } from './linux-desktop';
 import { AUTH_PROTOCOL } from './supabase-config';
 import {
   checkForUpdates,
@@ -67,6 +85,12 @@ import {
 
 let tray: Tray | null = null;
 let appWin: BrowserWindow | null = null;
+/** Set at the end of bootstrap. Until then there is no window to open and no session store. */
+let ready = false;
+/** A sign-in callback that arrived before we were ready — macOS can deliver it that early. */
+let pendingDeepLink: string | null = null;
+
+const IS_MAC = process.platform === 'darwin';
 
 /**
  * A second instance would install a second keyboard hook and double every dictation, so it
@@ -109,18 +133,44 @@ app.on('second-instance', (_event, argv) => {
   openApp('dictation');
 });
 
-// macOS delivers deep links as an event instead of argv. Harmless on Windows, and it means
-// the auth flow is already correct on the day the four platform files get their branches.
+// macOS delivers deep links as an event instead of argv — and when the link is what launched
+// the app, before `ready`, so before there is a window to open or a session to write. Those
+// are parked and replayed at the end of bootstrap; dropping one would drop a consent the
+// user has just given. Registered at the top level, not in bootstrap, for the same reason.
 app.on('open-url', (event, url) => {
   event.preventDefault();
+  if (!ready) {
+    pendingDeepLink = url;
+    return;
+  }
   void completeSignIn(url).then((handled) => {
     if (handled) openApp('account');
   });
 });
 
+// Double-clicking the app in Finder or Launchpad while it is already running. A menu bar
+// app with no window open would otherwise appear to do nothing at all.
+app.on('activate', () => {
+  if (ready) openApp('dictation');
+});
+
 // Keep the app alive with no windows open — it's a tray app. Merely registering a
 // listener suppresses Electron's default quit-on-last-window-closed behaviour.
 app.on('window-all-closed', () => {});
+
+/**
+ * The app window's icon in the Dock, shown only while that window is open.
+ *
+ * The app is a menu bar app (`LSUIElement` in electron-builder.yml), so at rest it has no
+ * Dock icon and no Cmd-Tab entry — like the tray app it is on Windows. But a window with no
+ * Dock icon cannot be Cmd-Tabbed back to once it is behind something, which makes the app
+ * window feel lost; so the icon comes and goes with it.
+ */
+function setDockVisible(visible: boolean): void {
+  if (!IS_MAC || !app.dock) return;
+  if (visible) void app.dock.show();
+  else app.dock.hide();
+}
 
 function iconPath(name: string): string {
   return app.isPackaged
@@ -131,12 +181,15 @@ function iconPath(name: string): string {
 function openApp(section: AppSection): void {
   if (appWin && !appWin.isDestroyed()) {
     if (appWin.isMinimized()) appWin.restore();
+    setDockVisible(true);
     appWin.show();
     appWin.focus();
+    if (IS_MAC) app.focus({ steal: true });
     appWin.webContents.send(IPC.appRoute, section);
     return;
   }
 
+  setDockVisible(true);
   appWin = new BrowserWindow({
     width: 1120,
     height: 740,
@@ -146,7 +199,14 @@ function openApp(section: AppSection): void {
     // The title bar is drawn in the renderer, so the frame has to go. Everything that a
     // frame used to do — drag, minimise, maximise, close — is wired over IPC below, and
     // the drag region is the `-webkit-app-region: drag` header in the app's HTML.
-    frame: false,
+    //
+    // Except on a Mac, where the window keeps the system's own traffic lights: a Mac user
+    // looks top-left for them, and a set of Windows-style buttons on the right reads as a
+    // ported app. `hidden` keeps the lights over our header; the renderer hides its own
+    // buttons and leaves room for these (see `.platform-darwin` in the app's HTML).
+    ...(IS_MAC
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 16, y: 15 } }
+      : { frame: false }),
     // Matches --paper in the app's stylesheet, so a slow first paint isn't a flash of
     // black. Change one and change the other.
     backgroundColor: '#ffeee0',
@@ -173,8 +233,12 @@ function openApp(section: AppSection): void {
   appWin.on('maximize', sendWindowState);
   appWin.on('unmaximize', sendWindowState);
 
+  // A window opened from a menu bar app does not come to the front on its own.
+  if (IS_MAC) app.focus({ steal: true });
+
   appWin.on('closed', () => {
     appWin = null;
+    setDockVisible(false);
     // Nothing is listening for levels any more, and the test holds the microphone open.
     stopMicTest();
     // Likewise the shortcut test: the window that asked for key reports is gone, and a
@@ -193,10 +257,18 @@ function toAppWindow(channel: string, payload?: unknown): void {
   if (appWin && !appWin.isDestroyed()) appWin.webContents.send(channel, payload);
 }
 
+function trayTooltip(): string {
+  return `gapir me — ${formatChord(getSettings().hotkeys.pushToTalk)} bosib gapiring`;
+}
+
 function buildTray(): void {
-  const image = nativeImage.createFromPath(iconPath('tray.png'));
+  // The macOS menu bar wants a template image (black + alpha, recoloured by the system for
+  // light and dark bars); the white mark is for the Windows taskbar and Linux panels, which
+  // are dark by default. `trayTemplate@2x.png` beside it is picked up for Retina by name.
+  const image = nativeImage.createFromPath(iconPath(IS_MAC ? 'trayTemplate.png' : 'tray.png'));
+  if (IS_MAC) image.setTemplateImage(true);
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-  tray.setToolTip(`gapir me — ${formatChord(getSettings().hotkeys.pushToTalk)} bosib gapiring`);
+  tray.setToolTip(trayTooltip());
 
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -223,8 +295,74 @@ function buildTray(): void {
     ])
   );
 
-  tray.on('click', () => openApp('dictation'));
-  tray.on('double-click', () => openApp('dictation'));
+  // On macOS a click opens the menu, as every menu bar item does; these are the Windows
+  // taskbar's gestures (and Linux AppIndicator sends neither).
+  if (!IS_MAC) {
+    tray.on('click', () => openApp('dictation'));
+    tray.on('double-click', () => openApp('dictation'));
+  }
+}
+
+/**
+ * The macOS menu bar's menu, which exists for the keyboard rather than to be browsed.
+ *
+ * Without an Edit menu, ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z do nothing in a Mac app — they are menu
+ * shortcuts there, not text-field behaviour — so the search box, the notes pane and the
+ * name field would refuse paste. ⌘W and ⌘Q come from the same place. Windows and Linux
+ * keep Electron's default, which a frameless window never shows anyway.
+ */
+function buildAppMenu(): void {
+  if (!IS_MAC) return;
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: 'gapir me',
+      submenu: [
+        { role: 'about', label: 'gapir me haqida' },
+        { type: 'separator' },
+        { label: 'Sozlamalar…', accelerator: 'Cmd+,', click: () => openApp('settings') },
+        { type: 'separator' },
+        { role: 'hide', label: 'gapir me’ni yashirish' },
+        { role: 'hideOthers', label: 'Boshqalarni yashirish' },
+        { type: 'separator' },
+        { role: 'quit', label: 'Chiqish' }
+      ]
+    },
+    {
+      label: 'Tahrirlash',
+      submenu: [
+        { role: 'undo', label: 'Bekor qilish' },
+        { role: 'redo', label: 'Qaytarish' },
+        { type: 'separator' },
+        { role: 'cut', label: 'Kesish' },
+        { role: 'copy', label: 'Nusxalash' },
+        { role: 'paste', label: 'Qo‘yish' },
+        { role: 'selectAll', label: 'Hammasini belgilash' }
+      ]
+    },
+    {
+      label: 'Oyna',
+      submenu: [
+        { role: 'minimize', label: 'Kichraytirish' },
+        { role: 'close', label: 'Yopish' }
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** What the OS is currently allowing — see src/main/permissions.ts. */
+function permissionsState(): PermissionsState {
+  return {
+    platform: IS_MAC ? 'darwin' : process.platform === 'linux' ? 'linux' : 'win32',
+    microphone: microphoneStatus(),
+    accessibility: accessibilityGranted(),
+    hotkeyActive: hotkey.isRunning(),
+    wayland: isWayland()
+  };
+}
+
+function publishPermissions(): void {
+  toAppWindow(IPC.permissionsChanged, permissionsState());
 }
 
 function registerIpc(): void {
@@ -257,6 +395,7 @@ function registerIpc(): void {
       setSettings(patch);
       // Applied here rather than inside config.ts so that module stays free of UI concerns.
       if (patch.showIdlePill !== undefined) setIdleVisible(patch.showIdlePill);
+      if (patch.hotkeys !== undefined) tray?.setToolTip(trayTooltip());
       // A chord is stored *and* installed: the hook keeps its own copy, and the pill's hint
       // names the keys. Read back through getSettings rather than trusting `patch`, which
       // may hold a chord setSettings sanitised on the way in.
@@ -288,7 +427,17 @@ function registerIpc(): void {
     clipboard.writeText(text);
   });
 
-  ipcMain.handle(IPC.micTestStart, (_e, deviceId: string) => {
+  ipcMain.handle(IPC.micTestStart, async (_e, deviceId: string) => {
+    // On a Mac the meter is usually where the microphone question is first asked — the
+    // welcome flow's Mikrofon step. Asking here, before ffmpeg opens the device, is what
+    // makes it a prompt rather than a meter that silently never moves.
+    if (!(await requestMicrophone())) {
+      const message = 'Mikrofonga ruxsat yo‘q — Tizim sozlamalari → Maxfiylik → Mikrofon';
+      toAppWindow(IPC.micError, message);
+      publishPermissions();
+      return;
+    }
+    publishPermissions();
     startMicTest(deviceId, {
       onLevel: (level) => toAppWindow(IPC.micLevel, level),
       onError: (message) => {
@@ -305,6 +454,30 @@ function registerIpc(): void {
   // what the welcome flow is asking. main reports only the chord it was handed.
   ipcMain.handle(IPC.hotkeyWatch, (_e, chord: unknown) => {
     hotkey.watch(Array.isArray(chord) ? chord.filter((k): k is string => typeof k === 'string') : []);
+  });
+
+  // ---- OS permissions ----
+  //
+  // Asking is two different gestures depending on history, and only macOS knows which: the
+  // first time, a system prompt; after a refusal, never again — only System Settings can
+  // change the answer, so that is what we open. Either way the renderer gets the state back,
+  // and an Accessibility grant made later in System Settings arrives on permissionsChanged
+  // when the poll sees it.
+  ipcMain.handle(IPC.permissionsGet, () => permissionsState());
+  ipcMain.handle(IPC.permissionsRequest, async (_e, kind: unknown) => {
+    if (kind === 'microphone') {
+      const status = microphoneStatus();
+      if (status === 'not-determined') await requestMicrophone();
+      else if (status !== 'granted') openPrivacySettings('microphone');
+    } else if (kind === 'accessibility') {
+      // `true` shows the system sheet, which itself offers to open System Settings — and
+      // after the first time it is silent, so open the pane ourselves as well.
+      if (!accessibilityGranted(true)) {
+        openPrivacySettings('accessibility');
+        whenAccessibilityGranted(publishPermissions);
+      }
+    }
+    return permissionsState();
   });
 
   ipcMain.handle(IPC.updateCheck, () => checkForUpdates());
@@ -342,10 +515,15 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.authRefresh, () => refreshPlan());
 
-  // No arguments, deliberately: the user is identified by the token main already holds, and
-  // the price is the server's to decide. A renderer that could name either would be a
-  // renderer that could name someone else's account or a cheaper price.
-  ipcMain.handle(IPC.billingCheckout, () => openCheckout());
+  // The renderer names a *plan* and nothing else: the user is identified by the token main
+  // already holds, and the price is looked up by the server. A renderer that could name
+  // either would be a renderer that could name someone else's account or a cheaper price.
+  // Anything that is not a paid plan we sell is refused here rather than forwarded.
+  ipcMain.handle(IPC.billingCheckout, (_e, plan: unknown) =>
+    (PAID_PLANS as readonly unknown[]).includes(plan)
+      ? openCheckout(plan as PaidPlan)
+      : 'Bunday tarif yo‘q'
+  );
 
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {
     // Never hand an arbitrary string to the shell — a file: or ms-msdt: URL from a
@@ -376,8 +554,8 @@ function bootstrap(): void {
   // Must match `appId` in electron-builder.yml exactly — that is the id the installer
   // stamps on the shortcuts, and Windows groups taskbar buttons and routes notifications by
   // it. Two spellings means the running app and its own shortcut look like different
-  // programs.
-  app.setAppUserModelId('me.gapir.app');
+  // programs. A Windows concept; elsewhere the id comes from the bundle or .desktop file.
+  if (process.platform === 'win32') app.setAppUserModelId('me.gapir.app');
   // ...and clean up after the id this one replaced. Must come after the line above, and is
   // its direct consequence: Electron keys the run-at-login registry value on the AUMID, so
   // changing the AUMID orphans whatever an older build wrote. See dropLegacyAutostart.
@@ -391,6 +569,19 @@ function bootstrap(): void {
   // after the first.
   const note = pathsNote();
   if (note) console.log(note);
+
+  // A menu bar app: no Dock icon until the app window opens. The packaged build is already an
+  // agent app via LSUIElement and starts without one; this covers `npm run dev`, where the
+  // Electron binary's own Info.plist is in charge.
+  setDockVisible(false);
+  buildAppMenu();
+
+  // An AppImage has to register itself with the desktop (menu entry + the gapirme:// sign-in
+  // handler) — nothing installed it. A no-op for the .deb and everywhere else.
+  installAppImageEntry(iconPath('icon.png'));
+  // ...and Electron's login items do not exist on Linux, so the autostart entry is ours to
+  // keep pointing at wherever the app now is.
+  if (process.platform === 'linux' && getSettings().launchAtLogin) applyLaunchAtLogin(true);
 
   registerProtocol();
   registerIpc();
@@ -423,12 +614,29 @@ function bootstrap(): void {
   });
 
   try {
-    dictation.init();
+    // On a Mac the hook may only come up minutes from now, when Accessibility is granted —
+    // tell an open window when it does, so its "permission needed" card can go away.
+    dictation.init(publishPermissions);
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('[hotkey] hook failed to start:', detail);
     dialog.showErrorBox(
       'gapir me',
-      `Klaviatura hooki ishga tushmadi:\n\n${err instanceof Error ? err.message : String(err)}`
+      process.platform === 'linux'
+        ? `Klaviatura tugmalarini kuzatib bo‘lmadi (X11 kerak):\n\n${detail}\n\n` +
+            'Belgini bosib diktovka qilish baribir ishlaydi.'
+        : `Klaviatura hooki ishga tushmadi:\n\n${detail}`
     );
+  }
+
+  ready = true;
+  if (pendingDeepLink) {
+    const url = pendingDeepLink;
+    pendingDeepLink = null;
+    void completeSignIn(url).then((handled) => {
+      if (handled) openApp('account');
+    });
+    return;
   }
 
   // A cold start *through* the protocol: the app wasn't running when the browser finished the
@@ -450,6 +658,7 @@ if (isPrimaryInstance) {
 
 app.on('before-quit', () => {
   stopUpdater();
+  stopPermissionWatch();
   stopMicTest();
   dictation.shutdown();
   destroyOverlay();

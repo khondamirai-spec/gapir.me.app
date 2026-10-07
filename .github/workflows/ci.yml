@@ -7,9 +7,13 @@ on:
 
 jobs:
   check:
-    # windows-latest, not ubuntu: uiohook-napi and @nut-tree-fork ship platform-specific
-    # binaries, and the modules under test import them.
-    runs-on: windows-latest
+    # All three: uiohook-napi and @nut-tree-fork ship platform-specific binaries, the modules
+    # under test import them, and the audio/hotkey code now has a branch per OS.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +23,10 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: System libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libxtst6 libxt6 libxrandr2
+
       - run: npm ci
 
       - name: Typecheck
@@ -27,7 +35,7 @@ jobs:
       - name: Tests
         run: npm test
 
-      # Catches renderer and main build breakage without paying for the 150 MB installer.
+      # Catches renderer and main build breakage without paying for the installers.
       # ffmpeg is deliberately not fetched here — nothing in the build needs it.
       - name: Build
         run: npx electron-vite build

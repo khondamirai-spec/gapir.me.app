@@ -1,8 +1,9 @@
 import { startRecording, type Recorder, SAMPLE_RATE, BYTES_PER_SAMPLE } from './audio';
 import { hotkey } from './hotkey';
-import { injectText } from './inject';
+import { copyText, injectText } from './inject';
 import { ensureVisible, updateOverlay } from './overlay';
 import {
+  chunkedTranscriptionEnabled,
   geminiModel,
   geminiRealtimeEnabled,
   getSettings,
@@ -12,12 +13,21 @@ import {
 import { addHistory } from './history';
 import { stopMicTest } from './mic-test';
 import { isSignedIn } from './auth';
+import {
+  accessibilityGranted,
+  isWayland,
+  microphoneStatus,
+  requestMicrophone,
+  whenAccessibilityGranted
+} from './permissions';
+import { pasteShortcut } from '@shared/hotkeys';
 import { isConfigured } from './supabase-config';
 import { geminiBatch } from './stt/gemini-batch';
 import { geminiLive } from './stt/gemini-live';
 import { proxyBatch } from './stt/proxy-batch';
 import { mockStt, useMockStt } from './stt/mock';
-import type { SttSession, SttSessionOptions } from './stt/types';
+import { ChunkedTranscription } from './stt/chunked';
+import type { SttAdapter, SttSession, SttSessionOptions } from './stt/types';
 import type { AppState, OverlayPrompt, Settings } from '@shared/types';
 
 /**
@@ -45,6 +55,24 @@ const DONE_DISPLAY_MS = 900;
  * decided not to sign in today is the app arguing with them.
  */
 const SIGN_IN_DISPLAY_MS = 9000;
+/**
+ * A recording stops itself after this long, as if the hotkey had come up.
+ *
+ * The two-minute clip cap used to double as stuck-hotkey protection: an hour-long "dictation"
+ * was refused at the end and cost nothing. Chunked transcription removed that cap — pieces
+ * are sent as they are cut — so a key wedged down in front of a television would otherwise
+ * spend the user's weekly words all afternoon. Ten minutes is far past any real dictation.
+ */
+const MAX_DICTATION_MS = 10 * 60 * 1000;
+
+/** What a transcription produced, and the failure that cut it short, if one did. */
+interface Transcript {
+  text: string;
+  /** Pieces the audio was sent as; 1 on every path but the chunked one. */
+  segments: number;
+  /** A failure after some text was already transcribed — paste the text, then show this. */
+  error?: unknown;
+}
 
 /**
  * Where this dictation's transcript will come from.
@@ -68,6 +96,10 @@ class Dictation {
   private state: AppState = 'IDLE';
   private recorder: Recorder | null = null;
   private session: SttSession | null = null;
+  /** The batch path, transcribing as the user speaks. Null on the Live and mock paths. */
+  private chunked: ChunkedTranscription | null = null;
+  /** Ends a recording nobody has stopped — see MAX_DICTATION_MS. */
+  private autoStopTimer: NodeJS.Timeout | null = null;
   /**
    * Every PCM chunk, kept so the batch path can still transcribe the utterance if the Live
    * socket dies mid-session. ~32 KB per second, so a minute costs ~2 MB.
@@ -96,14 +128,47 @@ class Dictation {
    */
   private epoch = 0;
 
-  init(): void {
+  /**
+   * Wire the hotkey and install the keyboard hook. `onHookStarted` runs once the hook is
+   * actually live, which on a Mac can be minutes later — see startHook.
+   *
+   * Throws if the hook fails for a reason no permission will fix (no X display on Linux, a
+   * refused hook on Windows); the caller shows that to the user.
+   */
+  init(onHookStarted: () => void = () => {}): void {
     hotkey.on('start', () => void this.onStart());
     hotkey.on('stop', () => void this.onStop());
     hotkey.on('cancel', () => this.onCancel());
     // Hands-free from the keyboard is the same two transitions the pill's click drives.
     hotkey.on('toggle', () => this.toggle());
     this.applyHotkeys();
+    this.startHook(onHookStarted);
+  }
+
+  /**
+   * Install the hook now if the OS allows it, or as soon as it does.
+   *
+   * On macOS the keyboard hook needs Accessibility, and calling uIOhook.start() without it
+   * both throws and re-opens the system prompt — every time. So we wait for the grant
+   * instead, quietly: the pill still works by click in the meantime, and the app window
+   * shows what is missing and a button to fix it. Everywhere else the wait is zero.
+   */
+  private startHook(onStarted: () => void): void {
+    if (!accessibilityGranted()) {
+      console.warn('[hotkey] waiting for Accessibility permission before installing the hook');
+      whenAccessibilityGranted(() => {
+        try {
+          hotkey.start();
+          console.log('[hotkey] hook installed');
+          onStarted();
+        } catch (err) {
+          console.error('[hotkey] hook failed after the grant:', err instanceof Error ? err.message : err);
+        }
+      });
+      return;
+    }
     hotkey.start();
+    onStarted();
   }
 
   /**
@@ -213,7 +278,38 @@ class Dictation {
       return;
     }
 
+    // macOS asks before an app may hear the microphone, and without that answer ffmpeg does
+    // not fail — it waits, forever, recording nothing. So the question is asked here, by us,
+    // before the device is opened. The first time, that shows the system prompt — and this
+    // dictation ends there either way: the user is reading a dialog, the keys they were
+    // holding have long been released, and a recording that started behind the prompt would
+    // have no keyup left to stop it.
+    const mic = microphoneStatus();
+    if (mic === 'not-determined') {
+      const epoch = this.epoch;
+      const granted = await requestMicrophone();
+      if (this.epoch !== epoch) return;
+      this.fail(
+        granted
+          ? 'Mikrofonga ruxsat berildi — endi qaytadan bosib gapiring'
+          : 'Mikrofonga ruxsat berilmadi — Tizim sozlamalari → Maxfiylik → Mikrofon'
+      );
+      return;
+    }
+    if (mic === 'denied' || mic === 'restricted') {
+      this.fail('Mikrofonga ruxsat yo‘q — Tizim sozlamalari → Maxfiylik → Mikrofon');
+      return;
+    }
+
     this.set('RECORDING');
+
+    // The batch path starts transcribing now, a piece at a time, rather than after release.
+    // Created before the recorder so not a single chunk can arrive ahead of it.
+    const live = this.route === 'direct' && geminiRealtimeEnabled();
+    this.chunked =
+      (this.route === 'proxy' || this.route === 'direct') && !live && chunkedTranscriptionEnabled()
+        ? new ChunkedTranscription(this.segmentTranscriber(settings), (text) => this.showPartial(text))
+        : null;
 
     // Start capture and the socket together: the handshake overlaps with the user
     // drawing breath, which is most of why this feels instant rather than merely fast.
@@ -224,9 +320,18 @@ class Dictation {
       return;
     }
 
+    const epoch = this.epoch;
+    this.autoStopTimer = setTimeout(() => {
+      this.autoStopTimer = null;
+      if (this.epoch !== epoch || this.currentState() !== 'RECORDING') return;
+      console.warn(`[state] recording reached ${MAX_DICTATION_MS / 60000} min — stopping it`);
+      void this.onStop();
+    }, MAX_DICTATION_MS);
+
     this.recorder.on('data', (chunk) => {
       this.pcm.push(chunk);
       this.session?.pushAudio(chunk);
+      this.chunked?.pushAudio(chunk);
     });
 
     this.recorder.on('level', (level) => {
@@ -245,20 +350,18 @@ class Dictation {
     // It is unavailable on the proxy route, and not by omission: the Live API is a WebSocket
     // the client opens to Google with a key in hand, and the whole point of the proxy is that
     // this process has no key. Streaming through our own server would be a second transport
-    // to build, not a flag to flip.
+    // to build, not a flag to flip — chunked transcription (above) is how the proxy route
+    // gets most of the same speed without one.
     const primary =
       this.route === 'mock' ? mockStt
-      : this.route !== 'proxy' && geminiRealtimeEnabled() ? geminiLive
+      : live ? geminiLive
       : null;
     if (!primary) return;
 
     try {
       const session = await primary.startSession({
         ...this.sessionOptions(settings),
-        onPartial: (text) => {
-          this.partial = text;
-          if (this.state === 'RECORDING' || this.state === 'TRANSCRIBING') this.set(this.state);
-        }
+        onPartial: (text) => this.showPartial(text)
       });
       // The user may have already released the key while we were connecting.
       if (this.currentState() !== 'RECORDING') {
@@ -281,6 +384,7 @@ class Dictation {
     const recorder = this.recorder;
     this.recorder = null;
     recorder?.stop();
+    this.clearAutoStop();
 
     const capturedBytes = recorder?.byteCount ?? 0;
     const durationMs = (capturedBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE)) * 1000;
@@ -289,6 +393,8 @@ class Dictation {
     if (durationMs < settings.minRecordingMs) {
       this.session?.cancel();
       this.session = null;
+      this.chunked?.cancel();
+      this.chunked = null;
       this.reset();
       return;
     }
@@ -297,14 +403,16 @@ class Dictation {
 
     const epoch = this.epoch;
     let text = '';
+    let segments = 1;
+    let trailingError: unknown;
     const startedAt = Date.now();
     try {
-      text = await this.transcribe(settings);
+      ({ text, segments, error: trailingError } = await this.transcribe(settings));
     } catch (err) {
       // A dictation the user has already walked away from must not raise an error pill over
       // whatever they went on to do.
       if (this.epoch !== epoch) return;
-      this.fail(err instanceof Error ? err.message : 'Matnga o‘girib bo‘lmadi');
+      this.fail(errorMessage(err));
       return;
     }
 
@@ -327,14 +435,18 @@ class Dictation {
     // question this line answered; with a server in the path the prior question is whether
     // the request even went through it, and on the proxy route `model=` is only what this
     // build *believes* the server uses — the server's own log is the authority.
+    //
+    // `rtt=` is measured from release, so on the chunked path it is the wait the user actually
+    // had — the last piece's round trip, not the sum of them. `segments=` says how many pieces
+    // there were; each one has its own `[chunk]` line above this one.
     console.log(
       `[state] route=${this.route} gemini/${geminiModel()} key=${this.keyOrigin} ` +
         `audio=${(durationMs / 1000).toFixed(1)}s rtt=${Date.now() - startedAt}ms ` +
-        `chars=${text.length} :: ${JSON.stringify(text.slice(0, 200))}`
+        `segments=${segments} chars=${text.length} :: ${JSON.stringify(text.slice(0, 200))}`
     );
 
     if (!text) {
-      this.fail('Hech narsa eshitilmadi');
+      this.fail(trailingError ? errorMessage(trailingError) : 'Hech narsa eshitilmadi');
       return;
     }
 
@@ -350,19 +462,70 @@ class Dictation {
       }
     }
 
+    // Without Accessibility a synthetic ⌘V is dropped without a word, and the transcript
+    // would vanish. The words are already in history; put them on the clipboard as well and
+    // say so — a dictation the user can paste by hand is a dictation, not a failure.
+    if (!accessibilityGranted()) {
+      copyText(text);
+      this.fail(
+        `Matn nusxalandi — ${pasteShortcut()} bosing. O‘zi qo‘yishi uchun Maxsus imkoniyatlar ruxsatini bering`
+      );
+      return;
+    }
+
     this.set('INJECTING');
     try {
-      await injectText(text);
+      await injectText(text, { keepOnClipboard: isWayland() });
     } catch (err) {
       this.fail(err instanceof Error ? err.message : 'Matnni joylashtira olmadim');
+      return;
+    }
+
+    // Part of a long dictation was pasted and a later piece failed — most often the weekly
+    // words running out partway. The text is in; now say why it stops where it does.
+    if (trailingError) {
+      this.fail(errorMessage(trailingError));
       return;
     }
 
     this.succeed();
   }
 
-  /** The Live socket's result if there is one, otherwise the batch path over the same audio. */
-  private async transcribe(settings: Settings): Promise<string> {
+  /** Live text on the pill: Live API partials, or the chunked path's finished pieces. */
+  private showPartial(text: string): void {
+    this.partial = text;
+    if (this.state === 'RECORDING' || this.state === 'TRANSCRIBING') this.set(this.state);
+  }
+
+  /**
+   * How the chunked path transcribes one piece: the same one-shot batch request a whole
+   * dictation used to be, on whichever transport this dictation's route resolved to.
+   */
+  private segmentTranscriber(settings: Settings): (pcm: Buffer) => Promise<string> {
+    const adapter: SttAdapter = this.route === 'proxy' ? proxyBatch : geminiBatch;
+    const options = this.sessionOptions(settings);
+    return async (pcm) => {
+      const session = await adapter.startSession(options);
+      session.pushAudio(pcm);
+      return session.end();
+    };
+  }
+
+  /**
+   * The chunked path if this dictation used it; otherwise the Live socket's result if there
+   * is one, and the batch path over the same audio if not.
+   */
+  private async transcribe(settings: Settings): Promise<Transcript> {
+    if (this.chunked) {
+      const chunked = this.chunked;
+      this.chunked = null;
+      return chunked.end();
+    }
+
+    return { text: await this.transcribeWhole(settings), segments: 1 };
+  }
+
+  private async transcribeWhole(settings: Settings): Promise<string> {
     if (this.session) {
       try {
         const text = await this.session.end();
@@ -416,6 +579,9 @@ class Dictation {
     this.recorder = null;
     this.session?.cancel();
     this.session = null;
+    this.chunked?.cancel();
+    this.chunked = null;
+    this.clearAutoStop();
     this.reset();
   }
 
@@ -475,6 +641,9 @@ class Dictation {
     this.recorder = null;
     this.session?.cancel();
     this.session = null;
+    this.chunked?.cancel();
+    this.chunked = null;
+    this.clearAutoStop();
     this.set('ERROR', message);
     this.scheduleReset(ERROR_DISPLAY_MS);
     hotkey.resetModifierState();
@@ -494,6 +663,12 @@ class Dictation {
     this.resetTimer = null;
   }
 
+  private clearAutoStop(): void {
+    if (!this.autoStopTimer) return;
+    clearTimeout(this.autoStopTimer);
+    this.autoStopTimer = null;
+  }
+
   /**
    * Back to rest. Note this does not hide the overlay — IDLE is a state the pill renders
    * (collapsed to its logo), and whether the window is on screen at all is decided by
@@ -509,10 +684,17 @@ class Dictation {
 
   shutdown(): void {
     this.clearResetTimer();
+    this.clearAutoStop();
     this.recorder?.stop();
     this.session?.cancel();
+    this.chunked?.cancel();
     hotkey.stop();
   }
+}
+
+/** The pill's wording for a failure: SttError messages are written in Uzbek for the pill. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Matnga o‘girib bo‘lmadi';
 }
 
 export const dictation = new Dictation();

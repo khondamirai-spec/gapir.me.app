@@ -4,7 +4,7 @@ import { keyboard, Key } from '@nut-tree-fork/nut-js';
 /**
  * Paste transcribed text into whatever field currently has focus.
  *
- * Clipboard + synthetic Ctrl+V is the only approach that works reliably across every
+ * Clipboard + synthetic Ctrl+V (⌘V on a Mac) is the only approach that works reliably across every
  * target app. Typing the text character-by-character is far too slow for a paragraph and
  * breaks in editors with autocomplete; the Win32 SendInput unicode path has the same
  * problem. So: save the clipboard, borrow it, paste, hand it back.
@@ -14,6 +14,12 @@ import { keyboard, Key } from '@nut-tree-fork/nut-js';
  *   2. Restore the clipboard on a timer, never synchronously, or the restore races the
  *      paste and the user gets their previous clipboard contents instead of the transcript.
  */
+
+/**
+ * The paste chord. ⌘V on a Mac — Ctrl+V there is a different command in most apps, and in a
+ * terminal it is a literal control character typed into the shell.
+ */
+const PASTE_MODIFIER = process.platform === 'darwin' ? Key.LeftCmd : Key.LeftControl;
 
 /** How long to let the target app consume the paste before restoring the clipboard. */
 const RESTORE_DELAY_MS = 220;
@@ -57,11 +63,31 @@ function restore(snap: ClipboardSnapshot): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export interface InjectOptions {
+  /**
+   * Leave the transcript on the clipboard instead of restoring what was there.
+   *
+   * For when the paste may not have landed and we cannot tell: under Wayland a synthetic
+   * keystroke reaches X11 apps only, so a dictation into a native Wayland window goes
+   * nowhere — and restoring the old clipboard afterwards would take away the one way the user
+   * still had to get their words, which is pressing Ctrl+V themselves.
+   */
+  keepOnClipboard?: boolean;
+}
+
+/**
+ * Put `text` on the clipboard and nothing more — for when we know a synthetic paste would be
+ * dropped (macOS without Accessibility). The user pastes it themselves.
+ */
+export function copyText(text: string): void {
+  if (text) clipboard.writeText(text);
+}
+
 /**
  * Put `text` into the focused field. Resolves once the paste has been sent; the
  * clipboard restore completes shortly afterwards on its own.
  */
-export async function injectText(text: string): Promise<void> {
+export async function injectText(text: string, options: InjectOptions = {}): Promise<void> {
   if (!text) return;
 
   const snap = snapshot();
@@ -77,8 +103,8 @@ export async function injectText(text: string): Promise<void> {
   await sleep(SETTLE_DELAY_MS);
 
   try {
-    await keyboard.pressKey(Key.LeftControl, Key.V);
-    await keyboard.releaseKey(Key.LeftControl, Key.V);
+    await keyboard.pressKey(PASTE_MODIFIER, Key.V);
+    await keyboard.releaseKey(PASTE_MODIFIER, Key.V);
   } catch (err) {
     // Hand the clipboard back immediately — the user can still paste manually,
     // so a failed keystroke shouldn't also cost them the transcript.
@@ -88,7 +114,7 @@ export async function injectText(text: string): Promise<void> {
     );
   }
 
-  setTimeout(() => restore(snap), RESTORE_DELAY_MS);
+  if (!options.keepOnClipboard) setTimeout(() => restore(snap), RESTORE_DELAY_MS);
 }
 
 /** Exported for tests. */

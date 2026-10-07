@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { parseDeviceList, rms, pcmToWav, friendlyFfmpegError, SAMPLE_RATE } from './audio';
+import {
+  parseDeviceList,
+  parseAvfoundationList,
+  parseAlsaSources,
+  captureArgs,
+  captureBackend,
+  defaultDeviceId,
+  rms,
+  pcmToWav,
+  friendlyFfmpegError,
+  SAMPLE_RATE
+} from './audio';
 
 describe('parseDeviceList', () => {
   // Captured verbatim from ffmpeg 7.x on Windows 11. Note the Cyrillic friendly names —
@@ -47,6 +58,95 @@ describe('parseDeviceList', () => {
   });
 });
 
+describe('parseAvfoundationList', () => {
+  // Captured from the bundled ffmpeg 8.1 on macOS 26 with an iPhone in Continuity range.
+  const REAL_OUTPUT = `[AVFoundation indev @ 0x7bc5024140] AVFoundation video devices:
+[AVFoundation indev @ 0x7bc5024140] [0] FaceTime HD Camera
+[AVFoundation indev @ 0x7bc5024140] [1] Xondamir Camera
+[AVFoundation indev @ 0x7bc5024140] [2] Capture screen 0
+[AVFoundation indev @ 0x7bc5024140] AVFoundation audio devices:
+[AVFoundation indev @ 0x7bc5024140] [0] Xondamir Microphone
+[AVFoundation indev @ 0x7bc5024140] [1] MacBook Air Microphone
+[in#0 @ 0x7bc5024000] Error opening input: Input/output error
+Error opening input file .
+Error opening input files: Input/output error`;
+
+  it('returns the audio devices only, addressed by name', () => {
+    expect(parseAvfoundationList(REAL_OUTPUT)).toEqual([
+      { label: 'Xondamir Microphone', id: 'Xondamir Microphone' },
+      { label: 'MacBook Air Microphone', id: 'MacBook Air Microphone' }
+    ]);
+  });
+
+  it('falls back to the index for a name ffmpeg would split on its colon', () => {
+    const devices = parseAvfoundationList(`[x] AVFoundation audio devices:
+[x] [0] Studio: Input 1`);
+    expect(devices).toEqual([{ label: 'Studio: Input 1', id: '0' }]);
+  });
+
+  it('returns nothing when there are no audio devices', () => {
+    expect(parseAvfoundationList('[x] AVFoundation video devices:\n[x] [0] FaceTime HD Camera')).toEqual([]);
+    expect(parseAvfoundationList('')).toEqual([]);
+  });
+});
+
+describe('parseAlsaSources', () => {
+  // ffmpeg -sources alsa on Ubuntu 24.04 (PipeWire). Two of the descriptions run onto a second
+  // line — ALSA puts a newline in them and ffmpeg prints it as-is.
+  const REAL_OUTPUT = `Auto-detected sources for alsa:
+  null [Discard all samples (playback) or generate zero samples (capture)]
+  pipewire [PipeWire Sound Server]
+  pulse [PulseAudio Sound Server]
+* default [Default ALSA Output (currently PipeWire Media Server)]
+  sysdefault:CARD=PCH [HDA Intel PCH, ALC3246 Analog
+Default Audio Device]
+  front:CARD=PCH,DEV=0 [HDA Intel PCH, ALC3246 Analog
+Front output / input]
+  hw:CARD=PCH,DEV=0 [HDA Intel PCH, ALC3246 Analog
+Direct hardware device without any conversions]
+  sysdefault:CARD=Webcam [C922 Pro Stream Webcam, USB Audio
+Default Audio Device]`;
+
+  it('keeps one row per sound card, named by its description', () => {
+    expect(parseAlsaSources(REAL_OUTPUT)).toEqual([
+      { label: 'HDA Intel PCH, ALC3246 Analog', id: 'sysdefault:CARD=PCH' },
+      { label: 'C922 Pro Stream Webcam, USB Audio', id: 'sysdefault:CARD=Webcam' }
+    ]);
+  });
+
+  it('leaves out default — the UI offers it as Avtomatik', () => {
+    expect(parseAlsaSources(REAL_OUTPUT).some((d) => d.id === 'default')).toBe(false);
+  });
+
+  it('returns nothing for empty output', () => {
+    expect(parseAlsaSources('')).toEqual([]);
+  });
+});
+
+describe('capture backends', () => {
+  it('picks one input device per OS', () => {
+    expect(captureBackend('win32')).toBe('dshow');
+    expect(captureBackend('darwin')).toBe('avfoundation');
+    expect(captureBackend('linux')).toBe('alsa');
+  });
+
+  it('spells the input the way each device wants it', () => {
+    expect(captureArgs('dshow', '@device_cm_{X}')).toEqual([
+      '-f', 'dshow', '-audio_buffer_size', '50', '-i', 'audio=@device_cm_{X}'
+    ]);
+    // ":<audio>" — an empty video half, or AVFoundation opens the camera.
+    expect(captureArgs('avfoundation', 'default')).toEqual(['-f', 'avfoundation', '-i', ':default']);
+    expect(captureArgs('alsa', 'sysdefault:CARD=PCH')).toEqual([
+      '-f', 'alsa', '-i', 'sysdefault:CARD=PCH'
+    ]);
+  });
+
+  it('uses the system default microphone where the OS has one', () => {
+    expect(defaultDeviceId('avfoundation')).toBe('default');
+    expect(defaultDeviceId('alsa')).toBe('default');
+  });
+});
+
 describe('friendlyFfmpegError', () => {
   // Verbatim from the bug where `audio=default` was passed to ffmpeg. DirectShow has no
   // "default" device alias, so an unconfigured microphone failed with this five-line
@@ -88,6 +188,19 @@ Error opening input files: I/O error`;
     const message = friendlyFfmpegError('[in#0 @ 0x7f] some unanticipated failure');
     expect(message).toBe('Mikrofonni ochib bo‘lmadi');
     expect(message).not.toContain('in#0');
+  });
+
+  it('names the right settings screen on each OS', () => {
+    expect(friendlyFfmpegError('Permission denied', 'win32')).toContain('Windows');
+    expect(friendlyFfmpegError('Permission denied', 'darwin')).toContain('Tizim sozlamalari');
+    expect(friendlyFfmpegError('spawn ffmpeg ENOENT', 'linux')).toContain('apt install ffmpeg');
+    expect(friendlyFfmpegError('spawn ffmpeg ENOENT', 'win32')).toContain('winget');
+  });
+
+  it('reads AVFoundation\'s bare I/O error as a missing device on macOS only', () => {
+    const stderr = '[in#0 @ 0x7b] Error opening input: Input/output error';
+    expect(friendlyFfmpegError(stderr, 'darwin')).toBe('Mikrofon topilmadi — Sozlamalardan tanlang');
+    expect(friendlyFfmpegError(stderr, 'win32')).toBe('Mikrofonni ochib bo‘lmadi');
   });
 
   it('handles empty stderr', () => {

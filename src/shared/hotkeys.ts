@@ -11,6 +11,27 @@
  * Keep this file dependency-free: it is imported by main and by two renderers.
  */
 
+/**
+ * The OS whose keyboard is being described.
+ *
+ * Only the *labels* depend on it — the canonical names, the stored chord and the keycodes
+ * are the same everywhere, so a settings.json is portable and the Win key of a Windows
+ * keyboard is the ⌘ key of a Mac one. Main has `process`; the renderers run with node
+ * integration off and have only the user agent, which Electron fills in faithfully.
+ */
+export type KeyPlatform = 'win32' | 'darwin' | 'linux';
+
+export function hostPlatform(): KeyPlatform {
+  if (typeof process !== 'undefined' && typeof process.platform === 'string') {
+    if (process.platform === 'darwin' || process.platform === 'linux') return process.platform;
+    return 'win32';
+  }
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  if (/Macintosh|Mac OS X/.test(ua)) return 'darwin';
+  if (/Linux|X11|CrOS/.test(ua)) return 'linux';
+  return 'win32';
+}
+
 /** The four keys that may be *held*. Order is the order a chord is displayed in. */
 export const MODIFIERS = ['Ctrl', 'Shift', 'Alt', 'Win'] as const;
 export type Modifier = (typeof MODIFIERS)[number];
@@ -155,7 +176,8 @@ export function chordProblem(chord: Chord): string {
   if (chord.length > MAX_CHORD_KEYS) return `Ko‘pi bilan ${MAX_CHORD_KEYS} ta tugma`;
   const plain = chord.filter((key) => !isModifier(key));
   if (plain.length > 1) return 'Faqat bitta oddiy tugma bo‘lishi mumkin';
-  if (chord.length - plain.length === 0) return 'Kamida bitta boshqaruv tugmasi kerak (Ctrl, Shift, Alt, Win)';
+  if (chord.length - plain.length === 0)
+    return `Kamida bitta boshqaruv tugmasi kerak (${MODIFIERS.map((m) => keyLabel(m)).join(', ')})`;
   if (chord.length < 2) return 'Kamida ikkita tugma kerak';
   return '';
 }
@@ -167,13 +189,24 @@ export function chordProblem(chord: Chord): string {
  */
 export function pushToTalkWarning(chord: Chord): string {
   return chord.some((key) => !isModifier(key))
-    ? 'Bu tugma bosib turilganda yozilib qolishi mumkin — faqat Ctrl/Shift/Alt/Win tavsiya etiladi'
+    ? `Bu tugma bosib turilganda yozilib qolishi mumkin — faqat ${MODIFIERS.map((m) => keyLabel(m)).join('/')} tavsiya etiladi`
     : '';
 }
 
-/** How a key is written on a cap. Only 'Win' differs from its canonical name. */
-export function keyLabel(name: string): string {
-  if (name === 'Win') return 'Win';
+/**
+ * How a key is written on a cap.
+ *
+ * The modifiers are where the platforms disagree: the key stored as 'Win' is ⌘ Command on a
+ * Mac and Super on Linux, and the one stored as 'Alt' is printed Option on every Mac
+ * keyboard. A hint that told a Mac user to hold "Win" would name a key they do not have.
+ */
+export function keyLabel(name: string, platform: KeyPlatform = hostPlatform()): string {
+  if (platform === 'darwin') {
+    if (name === 'Ctrl') return 'Control';
+    if (name === 'Alt') return 'Option';
+    if (name === 'Win') return 'Command';
+  }
+  if (name === 'Win') return platform === 'linux' ? 'Super' : 'Win';
   if (name === 'Space') return 'Space';
   if (name === 'CapsLock') return 'Caps';
   if (name === 'Backquote') return '`';
@@ -190,8 +223,13 @@ export function keyLabel(name: string): string {
   return name;
 }
 
-export function formatChord(chord: Chord): string {
-  return chord.map(keyLabel).join(' + ');
+export function formatChord(chord: Chord, platform: KeyPlatform = hostPlatform()): string {
+  return chord.map((key) => keyLabel(key, platform)).join(' + ');
+}
+
+/** The paste shortcut, as the user would press it themselves. */
+export function pasteShortcut(platform: KeyPlatform = hostPlatform()): string {
+  return platform === 'darwin' ? '⌘V' : 'Ctrl+V';
 }
 
 /** Read a chord back out of settings, dropping anything a hand-edit or an older build left. */

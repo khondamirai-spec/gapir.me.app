@@ -7,6 +7,8 @@ import {
   type HistoryEntry,
   type OverlayDock,
   type OverlayStatus,
+  type PaidPlan,
+  type PermissionsState,
   type PlanSnapshot,
   type Settings,
   type UpdateStatus
@@ -27,6 +29,13 @@ function subscribe<T>(channel: string, cb: (value: T) => void): () => void {
 }
 
 const api = {
+  /**
+   * The OS this window is drawn on, so it can name the right keys (⌘ on a Mac), lay out its
+   * title bar around the traffic lights, and say where the files are. Read once: it does not
+   * change, and the sandboxed preload's `process` carries it without any IPC.
+   */
+  platform: process.platform as 'win32' | 'darwin' | 'linux',
+
   /** Overlay: subscribe to dictation status. Returns an unsubscribe function. */
   onStatus(cb: (status: OverlayStatus) => void): () => void {
     return subscribe(IPC.overlayStatus, cb);
@@ -210,13 +219,30 @@ const api = {
     return ipcRenderer.invoke(IPC.authRefresh);
   },
 
-  /** Opens the Payme checkout in the system browser. Resolves with '' or an Uzbek error. */
-  startCheckout(): Promise<string> {
-    return ipcRenderer.invoke(IPC.billingCheckout);
+  /**
+   * Opens the Payme checkout for `plan` in the system browser. Resolves with '' or an Uzbek
+   * error. The price is the server's — only the plan is named here.
+   */
+  startCheckout(plan: PaidPlan): Promise<string> {
+    return ipcRenderer.invoke(IPC.billingCheckout, plan);
   },
 
   onAccountChanged(cb: (state: AccountState) => void): () => void {
     return subscribe(IPC.authChanged, cb);
+  },
+
+  /** ---- OS permissions ---- */
+  getPermissions(): Promise<PermissionsState> {
+    return ipcRenderer.invoke(IPC.permissionsGet);
+  },
+
+  /** Ask for a permission. Resolves with the new state; later changes arrive on the event. */
+  requestPermission(kind: 'microphone' | 'accessibility'): Promise<PermissionsState> {
+    return ipcRenderer.invoke(IPC.permissionsRequest, kind);
+  },
+
+  onPermissionsChanged(cb: (state: PermissionsState) => void): () => void {
+    return subscribe(IPC.permissionsChanged, cb);
   },
 
   /** ---- Misc ---- */

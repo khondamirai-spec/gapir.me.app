@@ -34,3 +34,8 @@ resources/ffmpeg.exe
 resources/ffmpeg-LICENSE.txt
 resources/.ffmpeg-download.zip
 resources/.ffmpeg-extract/
+# Built at package time by scripts/build-ffmpeg.sh (macOS, Linux)
+resources/ffmpeg
+resources/.ffmpeg-build/
+
+.DS_Store

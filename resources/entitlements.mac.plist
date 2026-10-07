@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements for the hardened runtime, used for the app and (as entitlementsInherit) for
+  every binary inside it — which includes the bundled ffmpeg, and that is the point of the
+  last key: ffmpeg is the process that actually opens the microphone, and under the hardened
+  runtime a binary without `device.audio-input` gets silence however the user answered the
+  permission prompt.
+
+  The first three are what Electron itself needs under the hardened runtime: V8 JITs, and the
+  native modules (uiohook-napi, libnut) are signed as part of this bundle rather than by a
+  team the library validator would recognise.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+  </dict>
+</plist>

@@ -31,6 +31,20 @@ const ACCOUNT_FIELD = 'order_id';
 /** How many months one purchase buys. */
 const MONTHS = 1;
 
+/**
+ * What can be bought. The plan names a row in `plan_limits`; its price is read from there and
+ * never from the request — see the header. Older builds post `{}` and mean Pro, which was
+ * the only paid plan when they shipped.
+ */
+const PAID_PLANS = ['pro', 'unlimited'] as const;
+type PaidPlan = (typeof PAID_PLANS)[number];
+
+function readPlan(body: unknown): PaidPlan | null {
+  const raw = body && typeof body === 'object' ? (body as Record<string, unknown>).plan : undefined;
+  if (raw === undefined) return 'pro';
+  return (PAID_PLANS as readonly unknown[]).includes(raw) ? (raw as PaidPlan) : null;
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -58,6 +72,7 @@ function serviceClient(): SupabaseClient {
 async function reusableOrder(
   db: SupabaseClient,
   userId: string,
+  plan: PaidPlan,
   amountTiyin: number
 ): Promise<number | null> {
   const { data } = await db
@@ -65,6 +80,7 @@ async function reusableOrder(
     .select('id, payme_transactions(state)')
     .eq('user_id', userId)
     .eq('state', 'pending')
+    .eq('plan', plan)
     .eq('amount_tiyin', amountTiyin)
     .order('created_at', { ascending: false })
     .limit(5);
@@ -92,26 +108,35 @@ Deno.serve(async (req) => {
   const user = userData?.user;
   if (userErr || !user) return json({ error: 'Kirish muddati tugadi — qaytadan kiring' }, 401);
 
+  let payload: unknown = {};
+  try {
+    payload = await req.json();
+  } catch {
+    // An empty or malformed body is a Pro purchase from a build that sent nothing.
+  }
+  const plan = readPlan(payload);
+  if (!plan) return json({ error: 'Bunday tarif yo‘q' }, 400);
+
   // The price comes from the table, never from the request. This is the line that makes the
   // amount trustworthy for the rest of the payment flow.
   const { data: limits, error: limitErr } = await db
     .from('plan_limits')
     .select('price_tiyin')
-    .eq('plan', 'pro')
+    .eq('plan', plan)
     .maybeSingle();
 
   const amountTiyin = Number(limits?.price_tiyin ?? 0);
   if (limitErr || !Number.isFinite(amountTiyin) || amountTiyin <= 0) {
-    console.error('[checkout] no usable price for the pro plan:', limitErr?.message);
+    console.error(`[checkout] no usable price for the ${plan} plan:`, limitErr?.message);
     return json({ error: 'Narx noma’lum — keyinroq urinib ko‘ring' }, 503);
   }
 
-  let orderId = await reusableOrder(db, user.id, amountTiyin);
+  let orderId = await reusableOrder(db, user.id, plan, amountTiyin);
 
   if (orderId === null) {
     const { data, error } = await db
       .from('payme_orders')
-      .insert({ user_id: user.id, months: MONTHS, amount_tiyin: amountTiyin })
+      .insert({ user_id: user.id, plan, months: MONTHS, amount_tiyin: amountTiyin })
       .select('id')
       .single();
 
@@ -133,7 +158,7 @@ Deno.serve(async (req) => {
   ].join(';');
 
   const url = `${CHECKOUT_BASE}/${btoa(params)}`;
-  console.log(`[checkout] user=${user.id} order=${orderId} amount=${amountTiyin}`);
+  console.log(`[checkout] user=${user.id} plan=${plan} order=${orderId} amount=${amountTiyin}`);
 
-  return json({ url, orderId, amountTiyin });
+  return json({ url, orderId, plan, amountTiyin });
 });

@@ -19,6 +19,10 @@ files:
 # then demands a Visual Studio installation to rebuild binaries that were already correct.
 npmRebuild: false
 
+# Ad-hoc signs the macOS app when there is no certificate to sign it properly — without it an
+# unsigned bundle will not open on Apple Silicon at all. See the script for why.
+afterPack: scripts/after-pack.cjs
+
 # Native modules must live outside the asar archive — .node files can't be loaded from it.
 asarUnpack:
   - '**/node_modules/uiohook-napi/**'
@@ -30,11 +34,11 @@ extraResources:
   - from: resources/tray.png
     to: tray.png
   # ffmpeg is not optional in a packaged build: nobody who downloads an installer is going
-  # to run `winget install ffmpeg` first. `npm run dist` fetches it via predist, so a build
-  # that reaches this point always has it, and a missing file here should fail the build
-  # rather than quietly produce an installer that can't record.
-  - from: resources/ffmpeg.exe
-    to: ffmpeg.exe
+  # to install ffmpeg first. `npm run dist` fetches it via predist — a download on Windows, a
+  # small source build on macOS and Linux (scripts/build-ffmpeg.sh) — so a build that reaches
+  # this point always has it, and a missing file here should fail the build rather than
+  # quietly produce an installer that can't record. The binary itself is listed per platform
+  # below, because its name differs.
   - from: resources/ffmpeg-LICENSE.txt
     to: ffmpeg-LICENSE.txt
 
@@ -66,6 +70,9 @@ win:
     - target: nsis
       arch: [x64]
   icon: resources/icon.png
+  extraResources:
+    - from: resources/ffmpeg.exe
+      to: ffmpeg.exe
   # An app that installs a keyboard hook and synthesises input trips heuristic AV detection.
   # Signing is what actually fixes this; add certificateFile when available.
   #
@@ -105,3 +112,116 @@ nsis:
   # (The new appId would derive ea5be9ac-7e82-5c12-a8f2-9bb2848d72cd, which is precisely the
   # second install this line exists to prevent.)
   guid: e474cddf-64b1-5ea6-961c-655c5864acae
+
+# ---------------------------------------------------------------------------------- macOS
+#
+# One universal build (Apple Silicon + Intel) rather than one per architecture: the download
+# page cannot reliably tell the two apart — Safari reports every Mac as "MacIntel" — and a
+# user who picks the wrong one gets an app that is slow under Rosetta or does not open at all.
+# The bundled ffmpeg is lipo'd universal by scripts/build-ffmpeg.sh so both halves carry the
+# identical file, which is what @electron/universal needs to merge them.
+#
+# Signing. With no certificate in the environment, scripts/after-pack.cjs ad-hoc signs the
+# bundle (electron-builder itself would leave it unsigned), which is the minimum Apple Silicon
+# will run at all. Downloaded, that build meets Gatekeeper:
+# the user has to allow it once in System Settings → Privacy & Security → "Open Anyway"
+# (the download page walks them through it). The real fix is an Apple Developer ID ($99/yr):
+# put CSC_LINK / CSC_KEY_PASSWORD and APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
+# in the repo's secrets and the release workflow signs and notarizes with no change here —
+# and src/main/updater.ts notices the Developer ID signature and turns in-place updates on.
+mac:
+  target:
+    - target: dmg
+      arch: [universal]
+    # electron-updater on macOS installs from the zip, never the dmg.
+    - target: zip
+      arch: [universal]
+  icon: resources/icon-mac.png
+  category: public.app-category.productivity
+  minimumSystemVersion: '10.15'
+  # A fixed name, like the Windows installer's, so the download page can link to
+  # /releases/latest/download/gapir-me-mac.dmg forever.
+  artifactName: gapir-me-mac.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
+  x64ArchFiles: Contents/Resources/ffmpeg
+  extendInfo:
+    # A menu bar app: no Dock icon and no Cmd-Tab entry at rest, like the tray app it is on
+    # Windows. src/main/index.ts shows the Dock icon while the app window is open.
+    LSUIElement: true
+    # Shown in the system's microphone prompt. Without this key macOS does not ask at all —
+    # it denies, silently, and ffmpeg records nothing.
+    NSMicrophoneUsageDescription: gapir me siz gapirgan so‘zlarni matnga aylantirish uchun mikrofonni ishlatadi.
+  extraResources:
+    - from: resources/ffmpeg
+      to: ffmpeg
+    - from: resources/trayTemplate.png
+      to: trayTemplate.png
+    - from: resources/trayTemplate@2x.png
+      to: trayTemplate@2x.png
+
+dmg:
+  title: gapir me
+  # The standard drag-to-Applications window.
+  contents:
+    - x: 140
+      y: 190
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+
+# ---------------------------------------------------------------------------------- Linux
+#
+# AppImage (runs anywhere, updates itself) and .deb (Debian/Ubuntu, installs a menu entry and
+# the gapirme:// handler system-wide). x64 only for now.
+#
+# The bundled ffmpeg is built in an old Debian (see release.yml) so its glibc floor sits below
+# Electron's own; it reads the microphone through ALSA, which on PipeWire/PulseAudio desktops
+# is routed through the sound server.
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: resources/icon-linux.png
+  category: Utility
+  # Matches `desktopName` in package.json and the entry src/main/linux-desktop.ts writes for an
+  # AppImage — one name, so the .deb and the AppImage claim gapirme:// as the same app.
+  executableName: gapir-me
+  synopsis: O‘zbekcha diktovka — tugmani bosib gapiring
+  maintainer: gapir.me <khondamirai@gmail.com>
+  desktop:
+    entry:
+      StartupWMClass: gapir me
+  extraResources:
+    - from: resources/ffmpeg
+      to: ffmpeg
+
+appImage:
+  artifactName: gapir-me-linux-x86_64.${ext}
+
+deb:
+  artifactName: gapir-me-linux-amd64.${ext}
+  # electron-builder's defaults, plus the X libraries the keyboard hook links (libxt6 is the
+  # one Electron does not already pull in) and ALSA, which the bundled ffmpeg records through.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - libxt6
+    - libxrandr2
+    - libx11-6
+    - libasound2 | libasound2t64
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0

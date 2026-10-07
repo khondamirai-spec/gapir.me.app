@@ -4,7 +4,7 @@ import { app, safeStorage, shell } from 'electron';
 import WebSocket from 'ws';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { WebSocketLikeConstructor } from '@supabase/realtime-js';
-import type { AccountState, AuthUser, PlanSnapshot } from '@shared/types';
+import { toPlanId, type AccountState, type AuthUser, type PlanId, type PlanSnapshot } from '@shared/types';
 import {
   AUTH_REDIRECT,
   SUPABASE_ANON_KEY,
@@ -196,13 +196,23 @@ export async function refreshPlan(): Promise<PlanSnapshot | null> {
     // `used` / `limit` keep their server-side names — the snapshot is jsonb built by
     // account_snapshot() and renaming its keys would be a migration for no gain — but they
     // are words per week on both sides of this line. See PlanSnapshot.
+    // `prices` is a { plan: tiyin } map of every plan on sale; `price_tiyin` is Pro's alone
+    // and predates the third plan, so it only fills in for a server that has no map yet.
+    const prices = (raw.prices && typeof raw.prices === 'object' ? raw.prices : {}) as Record<
+      string,
+      unknown
+    >;
     const plan: PlanSnapshot = {
-      plan: raw.plan === 'pro' ? 'pro' : 'free',
+      plan: toPlanId(raw.plan),
       wordsUsed: Number(raw.used ?? 0),
-      wordLimit: Number(raw.limit ?? 0),
+      // null is "no weekly cap" and must survive as null — see PlanSnapshot.wordLimit.
+      wordLimit: raw.limit === null ? null : Number(raw.limit ?? 0),
       resetsAt: typeof raw.resets_at === 'string' ? raw.resets_at : null,
       expiresAt: typeof raw.expires_at === 'string' ? raw.expires_at : null,
-      priceTiyin: Number(raw.price_tiyin ?? 0)
+      prices: {
+        pro: Number(prices.pro ?? raw.price_tiyin ?? 0),
+        unlimited: Number(prices.unlimited ?? 0)
+      }
     };
     emit({ plan, error: '' });
     return plan;
@@ -225,13 +235,13 @@ export async function refreshPlan(): Promise<PlanSnapshot | null> {
  * ones where they expect to have been charged nothing.
  */
 export function notePlanUsage(usage: {
-  plan: 'free' | 'pro';
+  plan: PlanId;
   wordsUsed: number;
-  wordLimit: number;
+  wordLimit: number | null;
   resetsAt: string | null;
 }): void {
   if (!state.plan) {
-    emit({ plan: { ...usage, expiresAt: null, priceTiyin: 0 } });
+    emit({ plan: { ...usage, expiresAt: null, prices: { pro: 0, unlimited: 0 } } });
     return;
   }
   emit({ plan: { ...state.plan, ...usage } });

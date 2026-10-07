@@ -1,7 +1,7 @@
 # gapir me
 
-Push-to-talk dictation for Uzbek. Hold **Ctrl+Shift**, speak, release — the text lands
-wherever your cursor is, in any app. Or click the pill at the bottom of the screen to
+Push-to-talk dictation for Uzbek, on **Windows, macOS and Linux**. Hold **Ctrl+Shift**
+(Control+Shift on a Mac), speak, release — the text lands wherever your cursor is, in any app. Or click the pill at the bottom of the screen to
 dictate hands-free: click to start, click again (or Esc) to stop. The keys are yours to
 change (Sozlamalar → Umumiy → Diktovka tugmalari), and you can bind a second chord that
 starts and stops hands-free without the mouse.
@@ -61,16 +61,37 @@ local to your machine.
 
 ## Installing (for users)
 
-Download the installer from the [releases page](../../releases/latest), or from the
-GitHub Pages site built from [docs/](docs/index.html). Windows 10/11, 64-bit. ffmpeg is
-bundled — nothing else to install.
+Download from [gapir.me/download](https://www.gapir.me/download), which picks the right file
+for your OS, or from the [releases page](../../releases/latest). ffmpeg is bundled
+everywhere — nothing else to install.
 
-Expect **"Windows protected your PC"** (More info → Run anyway) and possibly an antivirus
-complaint: the build is unsigned, and an app that installs a keyboard hook and synthesises
-keystrokes looks exactly like a keylogger to a heuristic scanner. The fix is a certificate —
-[Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/) is ~$10/mo
-and needs a verifiable legal entity. It is the highest-leverage thing to buy once this has
-users; until then, report false positives to Microsoft after each release.
+| OS | File | Notes |
+| --- | --- | --- |
+| Windows 10/11, x64 | `gapir-me-Setup.exe` | NSIS installer |
+| macOS 10.15+, Apple Silicon and Intel | `gapir-me-mac.dmg` | one universal build; drag to Applications |
+| Linux x64 | `gapir-me-linux-x86_64.AppImage` | any distribution; registers its own menu entry |
+| Debian / Ubuntu x64 | `gapir-me-linux-amd64.deb` | `sudo apt install ./gapir-me-linux-amd64.deb` |
+
+None of the builds are signed yet, and each OS says so:
+
+- **Windows** shows **"Windows protected your PC"** (More info → Run anyway) and possibly an
+  antivirus complaint: an app that installs a keyboard hook and synthesises keystrokes looks
+  exactly like a keylogger to a heuristic scanner. The fix is a certificate —
+  [Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/) is ~$10/mo
+  and needs a verifiable legal entity.
+- **macOS** refuses the first launch ("Apple could not verify…"). System Settings → Privacy &
+  Security → **Open Anyway**, once. The build is ad-hoc signed, which is what lets it run on
+  Apple Silicon at all, but not notarized. The fix is an Apple Developer ID ($99/yr) — add the
+  secrets listed in the mac section of [electron-builder.yml](electron-builder.yml) and the
+  release workflow signs and notarizes with no code change, and in-place auto-update turns on
+  with it. Then the app asks for **Microphone** and **Accessibility** — the second is what lets
+  it see the hotkey and paste; the app window shows what is missing and a button to fix it.
+- **Linux** has no signing prompt. The hotkey and the paste need an **X11 session**: under
+  Wayland they reach X11 (XWayland) apps only — clicking the pill still dictates, and the text
+  is left on the clipboard. The app says so when it detects Wayland.
+
+A certificate for Windows and a Developer ID for macOS are the highest-leverage things to buy
+once this has users.
 
 ## Accounts and API keys
 
@@ -84,8 +105,9 @@ inside an installer is a key anyone who downloads it can extract. That was an ac
 while the app was free. It is not one if people are paying, and it left no way to tell one
 user from another — nothing to attach a plan or a limit to.
 
-What the app holds instead is a Supabase session, stored in `%APPDATA%\gapir me\auth.json`
-and encrypted with Windows DPAPI. The project URL and `anon` key in
+What the app holds instead is a Supabase session, stored in `auth.json` in the app's data
+folder and encrypted with the OS keystore (Windows DPAPI, the macOS Keychain, libsecret on
+Linux). The project URL and `anon` key in
 [src/main/supabase-config.ts](src/main/supabase-config.ts) *are* committed, and that is
 correct: the anon key identifies the project, and everything it can reach is decided by the
 row-level-security policies in `supabase/migrations/`.
@@ -103,8 +125,11 @@ proxy was live. The only Gemini keys are the server's, set with
 
 ## Developing
 
-Requires **Node 22+** and **ffmpeg** on PATH (`winget install ffmpeg`) — the bundled copy is
-only fetched for packaged builds.
+Requires **Node 22+** and **ffmpeg** on PATH (`winget install ffmpeg`, `brew install ffmpeg`,
+`sudo apt install ffmpeg`) — the bundled copy is only fetched for packaged builds.
+
+On a Mac, dev runs inherit permissions from whatever launched them: run `npm run dev` from a
+terminal (or VS Code) that has Accessibility, or the hotkey waits for it.
 
 ```bash
 npm install
@@ -158,28 +183,40 @@ that parsed to no transcript.
 ## Releasing
 
 ```bash
-npm run ffmpeg   # fetch the bundled ffmpeg.exe (~108 MB, pinned + digest-checked)
-npm run dist     # -> release/gapir-me-Setup.exe
+npm run dist:win     # -> release/gapir-me-Setup.exe        (run on Windows)
+npm run dist:mac     # -> release/gapir-me-mac.dmg + .zip   (run on a Mac)
+npm run dist:linux   # -> release/gapir-me-linux-*.AppImage/.deb (run on Linux)
 ```
 
+Each one first runs `npm run ffmpeg`, which on Windows fetches a pinned, digest-checked
+ffmpeg.exe (~108 MB) and on macOS/Linux builds a ~2 MB LGPL ffmpeg from pinned source with
+[scripts/build-ffmpeg.sh](scripts/build-ffmpeg.sh) (about a minute; a universal binary on a
+Mac). Packages have to be built on their own OS — native modules and code signing both
+require it.
+
 Or let CI do it — tag a commit and
-[release.yml](.github/workflows/release.yml) builds, tests and publishes to a GitHub
-Release, including the `latest.yml` that `electron-updater` reads:
+[release.yml](.github/workflows/release.yml) builds and tests on all three OSes, then
+publishes one GitHub Release with every installer and the `latest*.yml` files that
+`electron-updater` reads:
 
 ```bash
 npm version patch && git push --follow-tags
 ```
 
 Installed copies check for updates on launch and every six hours, download in the
-background, and install on quit.
+background, and install on quit. The exception is an ad-hoc-signed Mac build: Squirrel.Mac
+only installs updates signed by the same Developer ID, so [updater.ts](src/main/updater.ts)
+reads the app's own signature and, without one, offers a "Yuklab olish" button to the
+download page instead.
 
 The download page in [docs/](docs/index.html) is meant to be served by GitHub Pages
 (Settings → Pages → main / docs). It derives the download URL from its own hostname, so
 there is no repo name to keep in sync.
 
-**The installer is ~150 MB, almost all of it ffmpeg.** That is a lot for the bandwidth this
-app's users have. A custom `--disable-everything --enable-indev=dshow` build would be a few
-MB and is the obvious next optimisation.
+**The Windows installer is ~150 MB, almost all of it ffmpeg.** That is a lot for the bandwidth
+this app's users have. macOS and Linux already bundle a custom `--disable-everything` build of
+a couple of MB ([build-ffmpeg.sh](scripts/build-ffmpeg.sh)); the same with
+`--enable-indev=dshow`, cross-compiled for Windows, is the obvious next optimisation.
 
 ## Layout
 
@@ -187,7 +224,9 @@ MB and is the obvious next optimisation.
 | --- | --- |
 | [src/main/state.ts](src/main/state.ts) | The dictation state machine — the only module that coordinates the others |
 | [src/main/hotkey.ts](src/main/hotkey.ts) | The user's chords, hold/release, via a low-level keyboard hook |
-| [src/main/audio.ts](src/main/audio.ts) | ffmpeg capture, device enumeration, RMS, WAV wrapping |
+| [src/main/audio.ts](src/main/audio.ts) | ffmpeg capture (dshow / avfoundation / alsa), device enumeration, RMS, WAV wrapping |
+| [src/main/permissions.ts](src/main/permissions.ts) | macOS Microphone and Accessibility, Linux Wayland detection |
+| [src/main/linux-desktop.ts](src/main/linux-desktop.ts) | the AppImage's menu entry and `gapirme://` handler, and Linux autostart |
 | [src/main/stt/](src/main/stt/) | The proxy adapter, the direct Gemini batch and Live adapters, the prompt, the mock |
 | [src/main/auth.ts](src/main/auth.ts) | Google sign-in and the encrypted Supabase session |
 | [supabase/](supabase/) | The schema and the three Edge Functions: `transcribe`, `checkout`, `payme` |
@@ -195,11 +234,51 @@ MB and is the obvious next optimisation.
 | [src/main/overlay.ts](src/main/overlay.ts) | The floating pill that must never steal focus |
 | [src/main/history.ts](src/main/history.ts) | The dictation log |
 | [src/shared/hotkeys.ts](src/shared/hotkeys.ts) | What a chord is, in the one vocabulary main and both renderers share |
-| [src/main/app-paths.ts](src/main/app-paths.ts) | `%APPDATA%\gapir me\`, and the one-time move out of the old folder |
+| [src/main/app-paths.ts](src/main/app-paths.ts) | the data folder (below), and the one-time move out of the old folder |
 | [src/renderer/app/](src/renderer/app/) | The window: all six panes, the shortcut editor, and the first-run setup |
 | [src/renderer/fonts/](src/renderer/fonts/) | The two brand typefaces, bundled because the renderers may not fetch |
 
 ## Things that look wrong but aren't
+
+**macOS and Linux build ffmpeg from source instead of downloading it.** There is no pinned,
+LGPL, microphone-capable binary for them to download: the macOS builds people link to are
+GPL, unversioned or Intel-only, and the Linux static builds lack ALSA. And this app needs one
+input device and a resampler, so the build is `--disable-everything` plus those — ~2 MB, a
+minute in CI, cached. Linux builds it inside Debian 11 so its glibc floor sits under
+Electron's own, and records through **ALSA** rather than PulseAudio: libasound is on every
+machine Electron runs on (Chromium links it) and libpulse is not, while on a PipeWire or
+PulseAudio desktop the ALSA `default` device is routed through the sound server anyway.
+
+**On a Mac the app asks for the microphone itself, before ffmpeg opens it.** Without a grant,
+AVFoundation neither fails nor delivers — ffmpeg sits there forever and the pill shows a
+recording of nothing. So [state.ts](src/main/state.ts) checks first, and the first dictation
+after the prompt deliberately ends there ("now press again"): the keys were released while the
+user read the dialog, and a recording started behind it would have no keyup to stop it. A
+no-audio watchdog in [audio.ts](src/main/audio.ts) is the backstop for everything else.
+
+**The keyboard hook waits for Accessibility instead of starting.** On macOS
+`uIOhook.start()` without Accessibility re-opens the system prompt every time, and can take
+the whole process down rather than throw. So `startHook` polls the permission and installs the
+hook when it is granted — no restart needed — and the pill keeps working by click meanwhile.
+The same switch covers the synthetic ⌘V; without it the transcript goes to the clipboard and
+the pill says to paste it.
+
+**`uiohook-napi` is `require`d inside a try, not imported.** It loads its native binary at
+import, and on Linux that binary links libXt, which Electron does not need — so a machine can
+run the app without it. A static import would kill the main process before it had a window to
+say why; [uiohook-loader.ts](src/main/uiohook-loader.ts) turns that into a hotkey that
+reports why it cannot start.
+
+**The Mac app is ad-hoc signed by our own hook.** electron-builder 25 signs only with a real
+certificate and otherwise leaves the bundle unsigned — and an unsigned, modified Electron app
+opens on Apple Silicon as "damaged", with no way past it. [after-pack.cjs](scripts/after-pack.cjs)
+signs it ad-hoc first; with a certificate configured, electron-builder signs over it.
+
+**The Mac app has no Dock icon until its window opens.** It is a menu bar app
+(`LSUIElement`), like the tray app it is on Windows; the Dock icon comes and goes with the
+window so the window can be Cmd-Tabbed back to. The pill and the dock guides are `panel`
+windows, because a non-activating NSPanel is the only kind of window whose click does not
+pull focus — and the caret — out of the app being dictated into.
 
 These decisions are load-bearing and will look like mistakes to anyone tidying up:
 
@@ -294,11 +373,14 @@ is geometry rather than a layout suggestion.
 ## Privacy
 
 Audio goes to Google and is not stored by this app. Transcripts *are* stored, in plaintext,
-at `%APPDATA%/gapir me/history.json` — the app window shows you the exact path. It is not
-encrypted because the list has to be searchable, and anything that can read `%APPDATA%` can
+in `history.json` in the app's data folder — `%APPDATA%\gapir me\` on Windows,
+`~/Library/Application Support/gapir me/` on macOS, `~/.config/gapir me/` on Linux; the app
+window shows you the exact path. It is not
+encrypted because the list has to be searchable, and anything that can read that folder can
 read this process's memory anyway. What you get instead is a switch to turn the log off and
 a button to wipe it. `settings.json` holds no credential; the Supabase session lives beside it
-in `auth.json`, encrypted with DPAPI.
+in `auth.json`, encrypted with the OS keystore (DPAPI, the macOS Keychain, or libsecret/KWallet
+on Linux).
 
 **Since dictation moved behind a server, that server sees things too, and it is worth being
 precise about which.** It receives the audio of each dictation, forwards it to Google, and
@@ -325,14 +407,11 @@ entirely.
 
 Deliberately absent, in rough priority order:
 
-- **macOS.** Windows-only for now, and the blocker is practical: a Mac build can't be
-  produced on Windows, and the Accessibility / Input Monitoring / Microphone prompts can't
-  be verified by CI. Four files need platform branches when the time comes —
-  `audio.ts` (dshow → avfoundation), `hotkey.ts` (Ctrl+Shift → hold Right ⌘, or keep the
-  combo), `inject.ts` (Ctrl+V → ⌘V), and
-  `overlay.ts` (`toolbar` → `panel`, plus `app.dock.hide()`). Shipping it to anyone else
-  also needs an Apple Developer account for signing and notarization.
-- **Code signing** — see Installing above.
+- **Code signing and notarization** — see Installing above. Both are configuration now, not
+  code: buy the certificates and add the secrets.
+- **Native Wayland** — a global hotkey and a synthetic paste for native Wayland apps need the
+  compositor's cooperation (the GlobalShortcuts and RemoteDesktop portals), not an X11 hook.
+- **Linux arm64** — uiohook ships the binary; the build matrix does not include it yet.
 - **Latin/Cyrillic toggle** — Uzbek is split across both scripts, and the prompt currently
   pins output to Latin.
 - **Per-app style** — Wispr changes register between a chat window and a document; here the

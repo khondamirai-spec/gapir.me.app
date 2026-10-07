@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An Electron tray app for Windows: hold **Ctrl+Shift** (or whatever the user has bound —
+An Electron tray app for Windows, macOS and Linux: hold **Ctrl+Shift** (or whatever the user has bound —
 the chord is a setting now, see `Settings.hotkeys`), speak Uzbek, release, and the
 transcript is pasted into whatever app has focus. Clicking the overlay pill does the same
 hands-free — click to start, click again (or Esc) to stop. Speech goes to **Google Gemini**, not to a
@@ -50,8 +50,10 @@ npm test             # vitest run
 npm run typecheck    # tsc --noEmit
 npm run build        # typecheck + electron-vite build
 npm start            # electron-vite preview — run the built output, no dev server
-npm run dist         # fetches ffmpeg (predist) then builds release/gapir-me-Setup.exe
-npm run release      # same, but --publish always (CI uses this; see Release below)
+npm run dist:win     # fetch ffmpeg, then build release/gapir-me-Setup.exe     (on Windows)
+npm run dist:mac     # build ffmpeg, then release/gapir-me-mac.dmg + .zip      (on a Mac)
+npm run dist:linux   # build ffmpeg, then the AppImage and .deb                (on Linux)
+npm run ffmpeg       # just the ffmpeg step: download (Windows) / scripts/build-ffmpeg.sh
 npm run spike        # replay sample.pcm through Gemini and print the transcript
 npm run spike -- --model a,b   # same audio through several models, side by side
 npm run spike -- --models      # list the models the key can reach
@@ -98,14 +100,18 @@ same goes for `GAPIR_ME_GEMINI_MODEL` and `GAPIR_ME_GEMINI_REALTIME`, which exis
 model or the Live socket can be tried without touching a settings screen that no longer has
 either control.
 
-Dev needs **Node 22+** and **ffmpeg on PATH** (`winget install ffmpeg`); the bundled copy is
-only fetched for packaged builds.
+Dev needs **Node 22+** and **ffmpeg on PATH** (`winget install ffmpeg` / `brew install ffmpeg` /
+`sudo apt install ffmpeg`); the bundled copy is only fetched for packaged builds.
+
+**VS Code's terminal also sets `ELECTRON_RUN_AS_NODE` for anything else you launch from it** —
+including a packaged `gapir me.app/Contents/MacOS/gapir me` run by hand, which then dies with
+"bad option". `env -u ELECTRON_RUN_AS_NODE` first.
 
 **Quit any running copy before `npm run dev`, and check that you did.** The single-instance
 lock does not care that the second copy is a newer build: it quits, and the *running* one
 answers by opening its app window (see `second-instance` in [index.ts](src/main/index.ts)).
 So a window appears, nothing about it has changed, and the obvious conclusion — "my edit did
-nothing" — is wrong. `Get-Process electron | Stop-Process -Force` first; an installed build
+nothing" — is wrong. `Get-Process electron | Stop-Process -Force` (or `pkill -f "gapir me"`) first; an installed build
 counts too, and shares the lock. This is the same mechanism sign-in rides on, so it cannot be
 relaxed for convenience.
 
@@ -128,8 +134,8 @@ restored, sign-in cannot complete, and every dictation on a configured build say
 *"Kirish kerak"*. It is not dev-only — a packaged build runs the same embedded Node. The
 dependency is a caret range, so a machine that installed before 2.112 will not reproduce it.
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml))
-runs on `windows-latest` — the native deps ship platform-specific binaries and the modules
-under test import them.
+runs on Windows, macOS and Linux — the native deps ship platform-specific binaries, the
+modules under test import them, and audio/hotkey/inject now branch per OS.
 
 ## Architecture
 
@@ -147,7 +153,10 @@ The leaves, so you can find a behaviour without opening all of them:
 | file | role |
 | --- | --- |
 | `index.ts` | bootstrap: single-instance lock, tray, the app `BrowserWindow`, every `ipcMain` handler |
-| `audio.ts` | ffmpeg dshow capture, device enumeration, `rms`, `pcmToWav` |
+| `audio.ts` | ffmpeg capture — dshow / avfoundation / alsa, one `CaptureBackend` per OS — device enumeration, `rms`, `pcmToWav` |
+| `permissions.ts` | macOS Microphone + Accessibility (ask, poll, open System Settings), Linux `isWayland()` |
+| `uiohook-loader.ts` | `require`s uiohook-napi inside a try, so a missing libXt costs the hotkey, not the app |
+| `linux-desktop.ts` | the AppImage's `.desktop` entry + `gapirme://` handler, and Linux autostart |
 | `hotkey.ts` | the uiohook listener that emits `start` / `stop` / `cancel` / `toggle`, matching the user's chords |
 | `inject.ts` | clipboard save → paste → restore-on-a-timer |
 | `overlay.ts` | the pill window, its bounds, `applyVisibility()`, and the drag magnet |
@@ -163,7 +172,8 @@ The leaves, so you can find a behaviour without opening all of them:
 | `logger.ts` | tees `console.*` into `userData\logs\main.log` — a packaged app has no console |
 
 `mic-test.ts` is the one leaf with a rule you can't see from its own file: **only one ffmpeg
-process can hold a DirectShow device at a time**, so a dictation has to win. `state.ts` calls
+process can hold a DirectShow device at a time** (and a raw ALSA `hw:` device), so a
+dictation has to win. `state.ts` calls
 `stopMicTest()` before opening the microphone, and the dependency points that way (state →
 mic-test) on purpose — never the reverse.
 
@@ -250,6 +260,12 @@ and callable only with the service-role key; the app's `anon` key reaches nothin
 the migration is not tidiness — without it a signed-in user could call `fulfil_payme_order()`
 and give themselves a year of Pro, and RLS would not stop them.
 
+**There are three plans: `free`, `pro` and `unlimited` (shown as *Bepul*, *Pro*, *Cheksiz*).**
+Cheksiz has no weekly word cap — its `weekly_word_limit` is NULL, which arrives in the app as
+`wordLimit: null` and must never be coerced to 0 (that reads as "nothing left") — but the
+per-minute and clip-length caps still apply. Prices are rows in `plan_limits`, reach the app
+through `account_snapshot().prices`, and are never written into the UI.
+
 **The quota is words per week — 1000 free, 6000 on Pro — and it used to be dictations per
 day.** A dictation was never a unit of anything: "ha" and a two-minute paragraph spent one
 slot each, so the plan measured how often somebody pressed a key rather than what they got
@@ -323,6 +339,8 @@ Function, over keys nobody can extract.
 | `proxy-batch.ts` | posts the WAV to our Edge Function with the user's JWT — **the path every installed copy takes**, and the one with no API key in the process |
 | `gemini-batch.ts` | `generateContent` with inline WAV, called directly — the dev `.env` and pre-Supabase path |
 | `gemini-live.ts` | Live API WebSocket — the streaming experiment, **off by default**, and unavailable on the proxy route (it needs a key in hand) |
+| `chunked.ts` | drives the batch adapters **while the user is still speaking**: each piece the segmenter closes is sent at once, so release waits for one short clip and a dictation has no length cap (state.ts auto-stops at 10 min). A later piece failing keeps the text before it. `GAPIR_ME_CHUNKED=0` turns it off in dev |
+| `segmenter.ts` | where to cut: at a ≥350 ms pause once a piece is ≥20 s, forced at the quietest moment by 45 s. Pure, tested on synthetic audio |
 | `gemini-common.ts` | prompt building and response parsing, shared by the two direct adapters |
 | `mock.ts` | fake transcriber for `npm run dev:mock` |
 
@@ -431,9 +449,10 @@ Three IPC rules main enforces and that must survive edits to
 window-control handlers act on `BrowserWindow.fromWebContents(event.sender)` rather than a
 module-level window; and **no credential crosses the bridge**. That third rule retired with
 the API-key field and came straight back with the session — `IPC.authGet` returns a name, an
-email and two counters, and the access token stays in main. `IPC.billingCheckout` takes no
-arguments for the same reason: a renderer that could name the user or the price could name
-someone else's account or a cheaper one.
+email and two counters, and the access token stays in main. `IPC.billingCheckout` takes a
+*plan* (`'pro'` or `'unlimited'`, checked against `PAID_PLANS` in main) and nothing else, for
+the same reason: a renderer that could name the user or the price could name someone else's
+account or a cheaper one. The checkout function looks the price up for the named plan.
 
 Sign-in is the one flow that does not resolve where it starts. `IPC.authSignIn` resolves once
 the system browser has been opened; the signed-in state arrives later on `IPC.authChanged`,
@@ -462,7 +481,8 @@ tray's *Loglar papkasi* item opens. That file is the whole of what you get back 
 whose dictation produced nothing, so treat it as the interface it is: anything worth
 diagnosing a remote failure with has to go through `console.*` to end up there.
 
-**Runtime state lives in `%APPDATA%\gapir me\`** — `settings.json` (all plaintext; there
+**Runtime state lives in the `gapir me` data folder** — `%APPDATA%\gapir me\` on Windows,
+`~/Library/Application Support/gapir me/` on macOS, `~/.config/gapir me/` on Linux — `settings.json` (all plaintext; there
 is no credential in it), `auth.json` (the Supabase session, **encrypted** with `safeStorage`
 — a refresh token is a credential, which is exactly why it is not in `settings.json`),
 `history.json`, and `logs\main.log`.
@@ -614,8 +634,15 @@ hotkey path.
 - Comments here explain *why*, at length, where a decision is non-obvious or was arrived at
   the hard way. Match that density; don't strip these comments while refactoring.
 - Modules export an `_internals` object where tests need at private constants.
-- Windows-only today. macOS needs platform branches in exactly four files —
-  `audio.ts`, `hotkey.ts`, `inject.ts`, `overlay.ts` (see the README's "Not built yet").
+- Three platforms. The OS branches live in `audio.ts` (capture backend), `inject.ts` (⌘V),
+  `overlay.ts` / `dock-guides.ts` (`toolbar` / `panel`), `permissions.ts`, `linux-desktop.ts`,
+  `updater.ts` (manual update on an unsigned Mac) and the bootstrap in `index.ts` (menu bar
+  app, traffic lights, app menu). Key *labels* are per OS (`keyLabel(name, platform)` —
+  Command/Option on a Mac, Super on Linux) but the stored chord names are not: 'Win' is ⌘.
+  The renderer learns the OS from `window.api.platform` and tags `<html>` with
+  `platform-<os>`.
+- **macOS: never call `uIOhook.start()` without Accessibility.** It re-prompts every time and
+  can abort the process. `startHook` in state.ts waits for the grant; keep it that way.
 
 ## Testing
 
@@ -650,8 +677,22 @@ trying to stand up Electron.
 ## Release
 
 `npm version patch && git push --follow-tags` →
-[release.yml](.github/workflows/release.yml) builds and publishes, including the `latest.yml`
-that `electron-updater` reads. `verifyUpdateCodeSignature: false` in
+[release.yml](.github/workflows/release.yml) builds on Windows, macOS and Linux with
+`--publish never`, uploads each platform's files as an artifact, and a final job publishes one
+GitHub Release with all of them — installers plus `latest.yml`, `latest-mac.yml` and
+`latest-linux.yml`. Publishing once, after all three succeed, is deliberate: three jobs racing
+to create one release is how a release ends up missing its Mac file while CI shows green. The
+asset names are fixed in electron-builder.yml (`gapir-me-Setup.exe`, `gapir-me-mac.dmg`,
+`gapir-me-linux-x86_64.AppImage`, `gapir-me-linux-amd64.deb`) because the website's download
+page links to `/releases/latest/download/<name>`.
+
+macOS signing: no certificate → [after-pack.cjs](scripts/after-pack.cjs) ad-hoc signs (an
+unsigned bundle is "damaged" on Apple Silicon). With `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`,
+`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` repo secrets, electron-builder
+signs with the Developer ID and notarizes, and the app's updater switches to in-place updates
+on its own. Building locally on a machine with an *Apple Development* certificate in the
+keychain: set `CSC_IDENTITY_AUTO_DISCOVERY=false`, or electron-builder tries to distribute
+with it. `verifyUpdateCodeSignature: false` in
 [electron-builder.yml](electron-builder.yml) is required while builds are unsigned; integrity
 rests on the SHA-512 in `latest.yml` over TLS. `npmRebuild: false` is also required — both
 native deps ship prebuilt N-API binaries, and rebuilding demands Visual Studio to produce
@@ -675,7 +716,8 @@ in [index.ts](src/main/index.ts) must keep matching `appId` exactly — it is wh
 taskbar button with the shortcut.
 
 `protocols:` in [electron-builder.yml](electron-builder.yml) is what registers the
-`gapirme://` scheme with the installer. Without it sign-in works perfectly in dev — where
+`gapirme://` scheme with the installer (and the Mac's Info.plist, and the .deb's `.desktop`
+file; an AppImage registers itself at launch, see `linux-desktop.ts`). Without it sign-in works perfectly in dev — where
 `registerProtocol()` claims the scheme at runtime — and silently does nothing on a packaged
 build, which is the worst possible place for that gap.
 

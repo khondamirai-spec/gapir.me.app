@@ -6,7 +6,7 @@
     <title>gapir me — oʻzbekcha gapirib yozing</title>
     <meta
       name="description"
-      content="Ctrl+Shift ni bosib turib gapiring — aytganingiz kursor turgan joyga matn boʻlib yoziladi. Windows uchun, bepul tarif bilan."
+      content="Ctrl+Shift ni bosib turib gapiring — aytganingiz kursor turgan joyga matn boʻlib yoziladi. Windows, macOS va Linux uchun, bepul tarif bilan."
     />
     <!-- The brand faces, per design-style.md: EB Garamond for display, Figtree for UI,
          Geist Mono for the hotkey chips. The app bundles them; the website may fetch them. -->
@@ -268,10 +268,17 @@
             stroke-linejoin="round"
           />
         </svg>
-        Windows uchun yuklab olish
+        <span id="download-label">Windows uchun yuklab olish</span>
       </a>
+      <p class="cta-note" id="download-note">
+        Windows 10 / 11 · macOS 10.15+ (Apple Silicon va Intel) · Linux x64 · bepul tarif bilan
+      </p>
       <p class="cta-note">
-        Windows 10 / 11, 64-bit · bepul tarif bilan · macOS versiyasi keyinroq
+        Boshqa tizim:
+        <a id="dl-windows" href="#">Windows</a> ·
+        <a id="dl-macos" href="#">macOS</a> ·
+        <a id="dl-linux" href="#">Linux (AppImage)</a> ·
+        <a id="dl-deb" href="#">Ubuntu/Debian (.deb)</a>
       </p>
     </header>
 
@@ -319,6 +326,29 @@
         Antivirus ham shikoyat qilishi mumkin: dastur klaviaturani tinglaydi va tugma
         bosishini yuboradi — keylogger bilan bir xil koʻrinadi. Kodning hammasi ochiq,
         GitHub’da oʻqib koʻrsangiz boʻladi.
+      </div>
+    </section>
+
+    <section class="wrap">
+      <h2>macOS: “tekshirib boʻlmadi” chiqsa</h2>
+      <div class="callout">
+        <strong>Bu ham normal — ilova hali Apple tomonidan imzolanmagan.</strong>
+        <ol>
+          <li><strong>gapir-me-mac.dmg</strong> ni oching va ilovani <strong>Applications</strong> ga torting</li>
+          <li>Ochishga urinib koʻring, keyin <strong>Tizim sozlamalari → Maxfiylik va xavfsizlik</strong> → pastda <strong>Open Anyway</strong></li>
+          <li>Ilova soʻraganda <strong>Mikrofon</strong> va <strong>Maxsus imkoniyatlar</strong> (Accessibility) ruxsatini bering</li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="wrap">
+      <h2>Linux</h2>
+      <div class="callout">
+        <strong>AppImage</strong> hamma distributivda ishlaydi: faylni ishga tushiriladigan qiling
+        (<code>chmod +x gapir-me-linux-x86_64.AppImage</code>) va oching — ilova oʻzini menyuga
+        qoʻshadi. Ubuntu/Debian’da <code>sudo apt install ./gapir-me-linux-amd64.deb</code> ham
+        boʻladi. Tugmalar va avtomatik qoʻyish uchun X11 sessiyasi kerak; Wayland’da ular faqat
+        X11 dasturlarida ishlaydi.
       </div>
     </section>
 
@@ -379,7 +409,21 @@
       (function () {
         var OWNER = 'khondamirai-spec';
         var REPO = 'gapir.me.app';
-        var ASSET = 'gapir-me-Setup.exe';
+        // Fixed names, set in electron-builder.yml — /releases/latest/download/<name> always
+        // resolves to the newest release.
+        var ASSETS = {
+          windows: 'gapir-me-Setup.exe',
+          macos: 'gapir-me-mac.dmg',
+          linux: 'gapir-me-linux-x86_64.AppImage',
+          deb: 'gapir-me-linux-amd64.deb'
+        };
+        var LABELS = {
+          windows: 'Windows uchun yuklab olish',
+          macos: 'macOS uchun yuklab olish',
+          linux: 'Linux uchun yuklab olish'
+        };
+        var ua = (navigator.userAgent + ' ' + (navigator.platform || '')).toLowerCase();
+        var os = /mac/.test(ua) ? 'macos' : /linux|x11|cros/.test(ua) && !/android/.test(ua) ? 'linux' : 'windows';
 
         var host = location.hostname;
         var owner = OWNER;
@@ -392,8 +436,12 @@
 
         var base = 'https://github.com/' + owner + '/' + repo;
 
-        var button = document.getElementById('download');
-        button.href = base + '/releases/latest/download/' + ASSET;
+        var latest = base + '/releases/latest/download/';
+        document.getElementById('download').href = latest + ASSETS[os];
+        document.getElementById('download-label').textContent = LABELS[os];
+        ['windows', 'macos', 'linux', 'deb'].forEach(function (key) {
+          document.getElementById('dl-' + key).href = latest + ASSETS[key];
+        });
 
         var link = document.getElementById('repo-link');
         var prefix = document.createTextNode('Kod va barcha versiyalar: ');

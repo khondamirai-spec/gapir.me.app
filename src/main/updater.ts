@@ -1,4 +1,5 @@
-import { app } from 'electron';
+import { execFile } from 'node:child_process';
+import { app, shell } from 'electron';
 import type { UpdateStatus } from '@shared/types';
 
 /**
@@ -15,6 +16,34 @@ import type { UpdateStatus } from '@shared/types';
  */
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/** Where a release can always be downloaded by hand. */
+const DOWNLOAD_PAGE = 'https://www.gapir.me/download';
+
+/**
+ * Whether this copy can update itself in place.
+ *
+ * Everywhere but macOS, yes. On a Mac electron-updater hands the install to Squirrel.Mac,
+ * which will only swap in a new version signed by the same Apple Developer ID as the running
+ * one — an ad-hoc-signed build (what we ship until there is a certificate) fails that check
+ * after downloading the whole update, with an error no user can act on. So on a Mac we read
+ * our own signature: a Developer ID build updates itself like everywhere else, and an ad-hoc
+ * one is told a version exists and pointed at the download page. Buying the certificate
+ * turns auto-update on with no code change.
+ */
+let selfUpdate: Promise<boolean> | null = null;
+function canSelfUpdate(): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(true);
+  selfUpdate ??= new Promise((resolve) => {
+    const bundle = process.execPath.replace(/\.app\/Contents\/MacOS\/.*$/, '.app');
+    execFile('codesign', ['-dv', '--verbose=2', bundle], (_err, _stdout, stderr) => {
+      const signed = /Authority=Developer ID Application/.test(stderr ?? '');
+      console.log(`[updater] macOS signature: ${signed ? 'Developer ID' : 'ad-hoc'} — ${signed ? 'self-update' : 'manual download'}`);
+      resolve(signed);
+    });
+  });
+  return selfUpdate;
+}
 
 let status: UpdateStatus = { state: 'idle' };
 let listener: ((status: UpdateStatus) => void) | null = null;
@@ -52,12 +81,15 @@ export async function initUpdater(): Promise<void> {
 
   // Downloading is fine unattended; installing is not — it restarts the app, which would
   // yank the window out from under whatever the user is dictating into.
-  updater.autoDownload = true;
-  updater.autoInstallOnAppQuit = true;
+  const inPlace = await canSelfUpdate();
+  updater.autoDownload = inPlace;
+  updater.autoInstallOnAppQuit = inPlace;
 
   updater.on('checking-for-update', () => set({ state: 'checking' }));
   updater.on('update-not-available', () => set({ state: 'idle' }));
-  updater.on('update-available', (info) => set({ state: 'available', version: info.version }));
+  updater.on('update-available', (info) =>
+    set({ state: 'available', version: info.version, manual: !inPlace })
+  );
   updater.on('download-progress', (p) =>
     set({ state: 'downloading', percent: Math.round(p.percent), version: status.version })
   );
@@ -83,6 +115,10 @@ export async function checkForUpdates(): Promise<void> {
 
 /** Restart into the new version. Only meaningful once `state` is 'ready'. */
 export async function installUpdate(): Promise<void> {
+  if (status.manual) {
+    void shell.openExternal(DOWNLOAD_PAGE);
+    return;
+  }
   const updater = await autoUpdater();
   if (!updater || !downloaded) return;
   updater.quitAndInstall();

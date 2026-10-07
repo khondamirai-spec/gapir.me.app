@@ -6,6 +6,9 @@ import type {
   AppSection,
   HistoryEntry,
   Language,
+  PaidPlan,
+  PermissionsState,
+  PlanId,
   Settings,
   StyleSettings,
   UpdateStatus
@@ -17,6 +20,7 @@ import {
   formatChord,
   keyLabel,
   keyNameFromCode,
+  pasteShortcut,
   pushToTalkWarning,
   sortChord,
   type Chord,
@@ -248,6 +252,23 @@ async function fillDevices(select: HTMLSelectElement, selectedId: string): Promi
 }
 
 // ------------------------------------------------------------- window chrome
+
+/**
+ * Which OS this is, for the CSS (`.platform-darwin` lays the title bar out around the
+ * traffic lights) and for the handful of sentences that name an OS's own furniture — the
+ * tray is the menu bar on a Mac, and "run as administrator" means nothing there.
+ */
+const PLATFORM = window.api.platform;
+const IS_MAC = PLATFORM === 'darwin';
+document.documentElement.classList.add(`platform-${PLATFORM}`);
+
+/** How to reach the tray menu, and where the tray is — the menu bar on a Mac. */
+const TRAY_MENU_HINT = IS_MAC
+  ? 'menyu satridagi gapir me belgisini bosing'
+  : PLATFORM === 'linux'
+    ? 'paneldagi gapir me belgisini bosing'
+    : 'trayda gapir me belgisiga o‘ng tugma';
+const TRAY_PLACE = IS_MAC ? 'menyu satridagi' : PLATFORM === 'linux' ? 'paneldagi' : 'traydagi';
 
 el<HTMLButtonElement>('winMin').addEventListener('click', () => void window.api.minimizeWindow());
 el<HTMLButtonElement>('winClose').addEventListener('click', () => void window.api.closeWindow());
@@ -756,6 +777,7 @@ function renderQuota(): void {
     el<HTMLElement>('quotaOf').textContent = '';
     el<HTMLElement>('quotaPlan').textContent = '';
     el<HTMLElement>('quotaBar').style.width = '0%';
+    el<HTMLElement>('quotaBar').parentElement?.classList.remove('hidden');
     el<HTMLElement>('quotaNote').textContent = account.user
       ? 'Yuklanmoqda…'
       : 'Kirgandan so‘ng shu yerda haftalik limit ko‘rinadi.';
@@ -763,14 +785,28 @@ function renderQuota(): void {
     return;
   }
 
-  const isPro = plan.plan === 'pro';
+  el<HTMLElement>('quotaUsed').textContent = formatNumber(plan.wordsUsed);
+  el<HTMLElement>('quotaPlan').textContent = PLAN_NAMES[plan.plan];
+  // Only ever offered on the free plan, and only as a button — the pitch itself lives in the
+  // welcome flow and the Hisob pane. A statistics screen that nagged would be a statistics
+  // screen people stop opening.
+  el<HTMLElement>('quotaActions').classList.toggle('hidden', plan.plan !== 'free');
+
+  // Cheksiz: there is nothing to run out of, so no bar and no countdown — just the count. An
+  // empty bar would read as "you have used none of it", which is true and says nothing.
+  const capped = plan.wordLimit !== null;
+  el<HTMLElement>('quotaBar').parentElement?.classList.toggle('hidden', !capped);
+  if (plan.wordLimit === null) {
+    el<HTMLElement>('quotaOf').textContent = 'so‘z — cheklov yo‘q';
+    el<HTMLElement>('quotaNote').textContent = 'Cheksiz tarif: haftalik so‘z limiti yo‘q.';
+    return;
+  }
+
   const left = Math.max(0, plan.wordLimit - plan.wordsUsed);
   const ratio = plan.wordLimit > 0 ? Math.min(1, plan.wordsUsed / plan.wordLimit) : 0;
 
-  el<HTMLElement>('quotaUsed').textContent = formatNumber(plan.wordsUsed);
   el<HTMLElement>('quotaOf').textContent =
     `/ ${formatNumber(plan.wordLimit)} so‘z — ${formatNumber(left)} qoldi`;
-  el<HTMLElement>('quotaPlan').textContent = isPro ? 'Pro' : 'Bepul';
 
   const bar = el<HTMLElement>('quotaBar');
   bar.style.width = `${Math.round(ratio * 100)}%`;
@@ -785,11 +821,6 @@ function renderQuota(): void {
       : resets
         ? `Har dushanba yangilanadi — keyingisi ${resets}.`
         : 'Har dushanba yangilanadi.';
-
-  // Only ever offered on the free plan, and only as a button — the pitch itself lives in the
-  // welcome flow and the Hisob pane. A statistics screen that nagged would be a statistics
-  // screen people stop opening.
-  el<HTMLElement>('quotaActions').classList.toggle('hidden', isPro);
 }
 
 el<HTMLButtonElement>('quotaUpgrade').addEventListener('click', () => void show('account'));
@@ -1553,7 +1584,10 @@ async function openSettings(): Promise<void> {
   }
 
   const count = await fillDevices(deviceEl, settings.deviceId);
-  if (count === 0) setMsg(micMsgEl, 'Mikrofon topilmadi — ffmpeg o‘rnatilganini tekshiring', 'err');
+  // Only Windows is stuck without a list: macOS and Linux still have the system default,
+  // which "Avtomatik" uses, so an empty list there is not yet a reason to alarm anyone.
+  if (count === 0 && PLATFORM === 'win32')
+    setMsg(micMsgEl, 'Mikrofon topilmadi — ffmpeg o‘rnatilganini tekshiring', 'err');
 }
 
 async function closeSettings(): Promise<void> {
@@ -1606,16 +1640,26 @@ function setSettingsBadge(on: boolean): void {
 }
 
 window.api.onUpdateStatus((status: UpdateStatus) => {
-  updateInstallEl.classList.toggle('hidden', status.state !== 'ready');
+  // A manual update (an unsigned Mac build) is "ready" the moment it is found: there is
+  // nothing to download in the background, only a page to send the user to.
+  const actionable = status.state === 'ready' || (status.state === 'available' && !!status.manual);
+  updateInstallEl.classList.toggle('hidden', !actionable);
+  updateInstallEl.textContent = status.manual ? 'Yuklab olish' : 'O‘rnatish';
   updateCheckEl.disabled = status.state === 'checking' || status.state === 'downloading';
-  setSettingsBadge(status.state === 'ready');
+  setSettingsBadge(actionable);
 
   switch (status.state) {
     case 'checking':
       setMsg(updateMsgEl, 'Tekshirilmoqda…');
       break;
     case 'available':
-      setMsg(updateMsgEl, `${status.version} versiyasi topildi — yuklab olinmoqda`);
+      setMsg(
+        updateMsgEl,
+        status.manual
+          ? `${status.version} versiyasi chiqdi — saytdan yuklab oling`
+          : `${status.version} versiyasi topildi — yuklab olinmoqda`,
+        status.manual ? 'ok' : ''
+      );
       break;
     case 'downloading':
       setMsg(updateMsgEl, `Yuklanmoqda… ${status.percent ?? 0}%`);
@@ -1634,6 +1678,136 @@ window.api.onUpdateStatus((status: UpdateStatus) => {
       setMsg(updateMsgEl, 'Eng so‘nggi versiya o‘rnatilgan');
       break;
   }
+});
+
+// ------------------------------------------------------------- permissions
+
+/**
+ * What the OS has not allowed yet — macOS's two switches, and Linux's Wayland caveat.
+ *
+ * Drawn in three places from one state: a banner above every pane (so a missing permission
+ * cannot hide behind a pane the user is not looking at), and a card on the two welcome steps
+ * that need one. On Windows every field is all-clear and none of them ever appears.
+ */
+let permissions: PermissionsState | null = null;
+
+/** The Wayland notice is information, not a fix; once read it may be put away for good. */
+const WAYLAND_DISMISSED_KEY = 'gapir.waylandNoticeDismissed';
+function waylandDismissed(): boolean {
+  try {
+    return localStorage.getItem(WAYLAND_DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+const permBannerEl = el<HTMLElement>('permBanner');
+const permActionEl = el<HTMLButtonElement>('permAction');
+let permAction: (() => void) | null = null;
+
+function renderPermissions(): void {
+  const p = permissions;
+  let banner: { title: string; body: string; action: string; run: () => void } | null = null;
+
+  if (p?.platform === 'darwin' && !p.accessibility) {
+    banner = {
+      title: 'Tugmalar ishlashi uchun ruxsat kerak',
+      body:
+        'Maxsus imkoniyatlar (Accessibility) ruxsatisiz gapir me tugmalarni sezmaydi va matnni ' +
+        'o‘zi qo‘ya olmaydi. Tizim sozlamalarida gapir me’ni yoqing — qayta ishga tushirish shart emas.',
+      action: 'Ruxsat berish',
+      run: () => void requestPermission('accessibility')
+    };
+  } else if (p?.platform === 'darwin' && p.microphone !== 'granted' && p.microphone !== 'not-determined') {
+    banner = {
+      title: 'Mikrofonga ruxsat yo‘q',
+      body: 'Tizim sozlamalari → Maxfiylik va xavfsizlik → Mikrofon’da gapir me’ni yoqing.',
+      action: 'Sozlamalarni ochish',
+      run: () => void requestPermission('microphone')
+    };
+  } else if (p?.wayland && !waylandDismissed()) {
+    banner = {
+      title: 'Wayland sessiyasi',
+      body:
+        'Tugmalar va avtomatik qo‘yish faqat X11 dasturlarida ishlaydi. To‘liq ishlashi uchun ' +
+        'kirish ekranida «Xorg» sessiyasini tanlang. Belgini bosib gapirsangiz, matn buferga ' +
+        `ko‘chiriladi — ${pasteShortcut()} bilan qo‘yasiz.`,
+      action: 'Tushunarli',
+      run: () => {
+        try {
+          localStorage.setItem(WAYLAND_DISMISSED_KEY, '1');
+        } catch {
+          /* the notice comes back next time, which is harmless */
+        }
+        renderPermissions();
+      }
+    };
+  }
+
+  permBannerEl.classList.toggle('hidden', !banner);
+  if (banner) {
+    el<HTMLElement>('permTitle').textContent = banner.title;
+    el<HTMLElement>('permBody').textContent = banner.body;
+    permActionEl.textContent = banner.action;
+    permAction = banner.run;
+  }
+
+  // Welcome, Mikrofon step: until the system has said yes.
+  el<HTMLElement>('wMicPerm').classList.toggle(
+    'hidden',
+    !(p?.platform === 'darwin' && p.microphone !== 'granted')
+  );
+  el<HTMLButtonElement>('wMicPermBtn').textContent =
+    p?.microphone === 'not-determined' ? 'Ruxsat berish' : 'Sozlamalarni ochish';
+
+  // Welcome, Tugmalar step: Accessibility on a Mac, the Wayland caveat on Linux.
+  const keysCard = el<HTMLElement>('wKeysPerm');
+  const keysBtn = el<HTMLButtonElement>('wKeysPermBtn');
+  if (p?.platform === 'darwin' && !p.accessibility) {
+    keysCard.classList.remove('hidden');
+    keysBtn.classList.remove('hidden');
+    el<HTMLElement>('wKeysPermTitle').textContent = 'Maxsus imkoniyatlar ruxsatini bering';
+    el<HTMLElement>('wKeysPermBody').textContent =
+      'Tugmalarni sezish va matnni kursor turgan joyga qo‘yish uchun macOS shu ruxsatni so‘raydi. ' +
+      'Tugmani bosing, ochilgan ro‘yxatda gapir me’ni yoqing va shu oynaga qayting.';
+  } else if (p?.wayland) {
+    keysCard.classList.remove('hidden');
+    keysBtn.classList.add('hidden');
+    el<HTMLElement>('wKeysPermTitle').textContent = 'Wayland sessiyasida cheklov bor';
+    el<HTMLElement>('wKeysPermBody').textContent =
+      'Tugmalar va avtomatik qo‘yish faqat X11 dasturlarida ishlaydi. Kirish ekranida «Xorg» ' +
+      'sessiyasini tanlasangiz, hamma joyda ishlaydi.';
+  } else {
+    keysCard.classList.add('hidden');
+  }
+}
+
+async function requestPermission(kind: 'microphone' | 'accessibility'): Promise<void> {
+  permissions = await window.api.requestPermission(kind);
+  renderPermissions();
+  // A microphone granted from the welcome step should light the meter straight away.
+  if (kind === 'microphone' && permissions.microphone === 'granted' && isWelcomeOpen() && welcomeStep === STEP_MIC)
+    await startWelcomeMicTest();
+}
+
+permActionEl.addEventListener('click', () => permAction?.());
+el<HTMLButtonElement>('wMicPermBtn').addEventListener('click', () => void requestPermission('microphone'));
+el<HTMLButtonElement>('wKeysPermBtn').addEventListener('click', () => void requestPermission('accessibility'));
+
+window.api.onPermissionsChanged((state) => {
+  permissions = state;
+  renderPermissions();
+  // The hook has just come up (Accessibility granted): restart the key test so the caps light.
+  if (state.hotkeyActive && isWelcomeOpen() && welcomeStep === STEP_KEYS)
+    void window.api.watchHotkey(settings.hotkeys.pushToTalk);
+});
+
+// The user flips switches in System Settings, then comes back to this window — the moment to
+// look again, since macOS sends no notification for the microphone switch.
+window.addEventListener('focus', async () => {
+  if (PLATFORM !== 'darwin') return;
+  permissions = await window.api.getPermissions();
+  renderPermissions();
 });
 
 // -------------------------------------------------------------------- help
@@ -1668,8 +1842,29 @@ const wAuthMsgEl = el<HTMLElement>('wAuthMsg');
 
 /** Tiyin to a readable so'm figure: 5000000 -> "50 000 so'm". */
 function formatSom(tiyin: number): string {
+  return `${formatSomAmount(tiyin)} so‘m`;
+}
+
+/** The figure alone, for layouts that set the currency in smaller type beside it. */
+function formatSomAmount(tiyin: number): string {
   const som = Math.round(tiyin / 100);
-  return `${som.toLocaleString('ru-RU').replace(/ /g, ' ')} so‘m`;
+  return som.toLocaleString('ru-RU').replace(/ /g, ' ');
+}
+
+/** What each plan is called on screen. `plan_limits` ids are English; the UI is not. */
+const PLAN_NAMES: Record<PlanId, string> = {
+  free: 'Bepul',
+  pro: 'Pro',
+  unlimited: 'Cheksiz'
+};
+
+/**
+ * The upgrade button's label for one paid plan, with its price once the snapshot has one.
+ * Until then the plan is named without a figure rather than with a guessed one.
+ */
+function upgradeLabel(target: PaidPlan, tiyin: number): string {
+  const name = PLAN_NAMES[target];
+  return tiyin > 0 ? `${name}’ga o‘tish — ${formatSom(tiyin)}/oy` : `${name}’ga o‘tish`;
 }
 
 /** Initials for the avatar circle. Falls back to the email when Google sent no name. */
@@ -1706,47 +1901,61 @@ function renderAccount(): void {
   el<HTMLElement>('accEmail').textContent = account.user.email;
 
   const plan = account.plan;
-  const isPro = plan?.plan === 'pro';
+  const current: PlanId = plan?.plan ?? 'free';
+  const paid = current !== 'free';
 
-  el<HTMLElement>('accPlanName').textContent = isPro ? 'Pro' : 'Bepul';
-  el<HTMLElement>('accPlanBadge').textContent = isPro ? 'Pro' : 'Free';
-  el<HTMLElement>('accPlanBadge').className = isPro ? 'badge new' : 'badge';
+  el<HTMLElement>('accPlanName').textContent = PLAN_NAMES[current];
+  el<HTMLElement>('accPlanBadge').textContent = paid ? PLAN_NAMES[current] : 'Free';
+  el<HTMLElement>('accPlanBadge').className = paid ? 'badge new' : 'badge';
 
-  const upgradeEl = el<HTMLButtonElement>('accUpgrade');
-  upgradeEl.classList.toggle('hidden', isPro);
-  if (plan && plan.priceTiyin > 0) {
-    upgradeEl.textContent = `Pro’ga o‘tish — ${formatSom(plan.priceTiyin)}/oy`;
-  }
+  // Only offer what would be a step up: free sees both, Pro sees Cheksiz, Cheksiz sees
+  // neither. Offering Pro to someone on Cheksiz would be selling them less for less, and a
+  // payment flow is the wrong place to leave that to the user to notice.
+  const proEl = el<HTMLButtonElement>('accUpgrade');
+  const unlimitedEl = el<HTMLButtonElement>('accUpgradeUnlimited');
+  proEl.classList.toggle('hidden', current !== 'free');
+  unlimitedEl.classList.toggle('hidden', current === 'unlimited');
+  proEl.textContent = upgradeLabel('pro', plan?.prices.pro ?? 0);
+  unlimitedEl.textContent = upgradeLabel('unlimited', plan?.prices.unlimited ?? 0);
 
   // `plan === null` is "we haven't heard back yet", which must not be drawn as 0 / 0 — that
   // reads as a broken account rather than a pending request.
   if (!plan) {
     el<HTMLElement>('accUsage').textContent = 'Yuklanmoqda…';
     accBarEl.style.width = '0%';
+    accBarEl.parentElement?.classList.remove('hidden');
     el<HTMLElement>('accExpires').textContent = '';
     return;
   }
 
-  const left = Math.max(0, plan.wordLimit - plan.wordsUsed);
-  el<HTMLElement>('accUsage').textContent =
-    `Bu hafta: ${formatNumber(plan.wordsUsed)} / ${formatNumber(plan.wordLimit)} so‘z — ` +
-    `${formatNumber(left)} so‘z qoldi`;
+  // Cheksiz has no allowance to draw, so the bar goes and the count stays — the same rule as
+  // the Statistika card.
+  accBarEl.parentElement?.classList.toggle('hidden', plan.wordLimit === null);
+  if (plan.wordLimit === null) {
+    el<HTMLElement>('accUsage').textContent =
+      `Bu hafta: ${formatNumber(plan.wordsUsed)} so‘z — haftalik limit yo‘q`;
+  } else {
+    const left = Math.max(0, plan.wordLimit - plan.wordsUsed);
+    el<HTMLElement>('accUsage').textContent =
+      `Bu hafta: ${formatNumber(plan.wordsUsed)} / ${formatNumber(plan.wordLimit)} so‘z — ` +
+      `${formatNumber(left)} so‘z qoldi`;
 
-  const ratio = plan.wordLimit > 0 ? Math.min(1, plan.wordsUsed / plan.wordLimit) : 0;
-  accBarEl.style.width = `${Math.round(ratio * 100)}%`;
-  accBarEl.className = ratio >= 1 ? 'out' : ratio >= 0.66 ? 'low' : '';
+    const ratio = plan.wordLimit > 0 ? Math.min(1, plan.wordsUsed / plan.wordLimit) : 0;
+    accBarEl.style.width = `${Math.round(ratio * 100)}%`;
+    accBarEl.className = ratio >= 1 ? 'out' : ratio >= 0.66 ? 'low' : '';
+  }
 
   // Two different dates, and they are not interchangeable: the allowance comes back every
-  // Monday whatever the plan, while Pro itself runs out on a date the user paid for. Both are
-  // shown when both apply, because "you have no words left" and "your subscription ends
-  // Thursday" are answers to different worries.
+  // Monday whatever the plan, while a paid plan runs out on a date the user paid for. Both
+  // are shown when both apply, because "you have no words left" and "your subscription ends
+  // Thursday" are answers to different worries. Cheksiz has no allowance, so only its own.
   const lines: string[] = [];
   const resets = formatResetDay(plan.resetsAt);
-  if (resets) lines.push(`Limit yangilanadi: ${resets}`);
-  if (isPro && plan.expiresAt) {
+  if (resets && plan.wordLimit !== null) lines.push(`Limit yangilanadi: ${resets}`);
+  if (paid && plan.expiresAt) {
     const until = new Date(plan.expiresAt);
     if (!Number.isNaN(until.getTime())) {
-      lines.push(`Pro amal qiladi: ${formatDayMonth(until.getTime(), true)} gacha`);
+      lines.push(`${PLAN_NAMES[current]} amal qiladi: ${formatDayMonth(until.getTime(), true)} gacha`);
     }
   }
   el<HTMLElement>('accExpires').textContent = lines.join(' · ');
@@ -1796,9 +2005,9 @@ el<HTMLButtonElement>('accRefresh').addEventListener('click', async () => {
   setMsg(accPlanMsgEl, '');
 });
 
-el<HTMLButtonElement>('accUpgrade').addEventListener('click', async () => {
+async function upgradeFromAccount(target: PaidPlan): Promise<void> {
   setMsg(accPlanMsgEl, 'To‘lov sahifasi ochilmoqda…');
-  const error = await window.api.startCheckout();
+  const error = await window.api.startCheckout(target);
   if (error) {
     setMsg(accPlanMsgEl, error, 'err');
     return;
@@ -1806,7 +2015,13 @@ el<HTMLButtonElement>('accUpgrade').addEventListener('click', async () => {
   // The plan flips when Payme calls our server, not when the browser opens — so the honest
   // thing to say is "come back and refresh", not "you are now Pro".
   setMsg(accPlanMsgEl, 'To‘lovdan so‘ng «Yangilash» tugmasini bosing', 'ok');
-});
+}
+
+el<HTMLButtonElement>('accUpgrade').addEventListener('click', () => void upgradeFromAccount('pro'));
+el<HTMLButtonElement>('accUpgradeUnlimited').addEventListener(
+  'click',
+  () => void upgradeFromAccount('unlimited')
+);
 
 window.api.onAccountChanged((state) => {
   account = state;
@@ -2173,7 +2388,16 @@ async function renderDeviceList(): Promise<void> {
   list.replaceChildren();
 
   const rows = [
-    { id: '', label: 'Avtomatik', note: 'Tizim ro‘yxatidagi birinchi mikrofon' },
+    {
+      id: '',
+      label: 'Avtomatik',
+      // DirectShow has no default device, so Windows takes the first one listed; macOS
+      // and Linux follow the microphone chosen in the system's own sound settings.
+      note:
+        PLATFORM === 'win32'
+          ? 'Tizim ro‘yxatidagi birinchi mikrofon'
+          : 'Tizim ovoz sozlamalarida tanlangan mikrofon'
+    },
     ...devices.map((device) => ({ id: device.id, label: device.label, note: '' }))
   ];
 
@@ -2298,17 +2522,22 @@ async function enterStep(index: number): Promise<void> {
 }
 
 /**
- * The price on the plan step, and nothing else on it.
+ * The prices on the plan step, and nothing else on it.
  *
  * Read from the snapshot the server sent rather than written into the markup, for the same
  * reason the Hisob pane does it: a price baked into a shipped HTML file is a price that goes
- * stale the day it changes, and this one is quoted next to a payment button. Until the
- * snapshot lands the card shows an em dash — an honest "we are asking" — rather than a
+ * stale the day it changes, and these are quoted next to payment buttons. Until the
+ * snapshot lands the cards show an em dash — an honest "we are asking" — rather than a
  * number that might be wrong.
  */
 function renderWelcomePlans(): void {
-  const tiyin = account.plan?.priceTiyin ?? 0;
-  el<HTMLElement>('wProPrice').textContent = tiyin > 0 ? formatSom(tiyin) : '—';
+  const prices = account.plan?.prices;
+  // The figure alone: "so‘m / oy" sits beside it in small type, as on the free card, so a
+  // six-digit price still fits a third of the setup column on one line.
+  const show = (tiyin: number | undefined) =>
+    tiyin && tiyin > 0 ? formatSomAmount(tiyin) : '—';
+  el<HTMLElement>('wProPrice').textContent = show(prices?.pro);
+  el<HTMLElement>('wUnlimitedPrice').textContent = show(prices?.unlimited);
 }
 
 /** What was actually chosen, in the four words each choice deserves. */
@@ -2319,9 +2548,9 @@ async function renderSummary(): Promise<void> {
   const plan = account.plan;
   el<HTMLElement>('wSumPlan').textContent = !plan
     ? '—'
-    : plan.plan === 'pro'
-      ? `Pro — haftasiga ${formatCount(plan.wordLimit)} so‘z`
-      : `Bepul — haftasiga ${formatCount(plan.wordLimit)} so‘z`;
+    : plan.wordLimit === null
+      ? `${PLAN_NAMES[plan.plan]} — so‘z limiti yo‘q`
+      : `${PLAN_NAMES[plan.plan]} — haftasiga ${formatCount(plan.wordLimit)} so‘z`;
   el<HTMLElement>('wSumLang').textContent =
     LANGUAGES.find((language) => language.value === settings.language)?.label ?? '—';
   el<HTMLElement>('wSumKeys').textContent = formatChord(settings.hotkeys.pushToTalk);
@@ -2344,10 +2573,10 @@ el<HTMLButtonElement>('wMicChange').addEventListener('click', () => {
 el<HTMLButtonElement>('wMicYes').addEventListener('click', () => void enterStep(STEP_LANG));
 el<HTMLButtonElement>('wKeysYes').addEventListener('click', () => void enterStep(STEP_TRY));
 
-el<HTMLButtonElement>('wUpgrade').addEventListener('click', async () => {
+async function upgradeFromWelcome(target: PaidPlan): Promise<void> {
   const msg = el<HTMLElement>('wPlanMsg');
   setMsg(msg, 'To‘lov sahifasi ochilmoqda…');
-  const error = await window.api.startCheckout();
+  const error = await window.api.startCheckout(target);
   if (error) {
     setMsg(msg, error, 'err');
     return;
@@ -2360,13 +2589,29 @@ el<HTMLButtonElement>('wUpgrade').addEventListener('click', async () => {
     'Brauzerda to‘lovni yakunlang. Sozlashni davom ettiraverasiz — reja to‘lovdan so‘ng ochiladi.',
     'ok'
   );
-});
+}
+
+el<HTMLButtonElement>('wUpgrade').addEventListener('click', () => void upgradeFromWelcome('pro'));
+el<HTMLButtonElement>('wUpgradeUnlimited').addEventListener(
+  'click',
+  () => void upgradeFromWelcome('unlimited')
+);
 
 el<HTMLButtonElement>('wKeysNo').addEventListener('click', () => {
   setMsg(
     wKeysMsgEl,
-    'Boshqa dastur tugmalarni ushlab turgan bo‘lishi mumkin. Boshqa juftlikni tanlab ko‘ring, ' +
-      'yoki ilovani administrator sifatida ishga tushiring.',
+    // A switch that is on is not proof of a grant: macOS ties it to the signature of the build
+    // that was allowed, and an update (every ad-hoc build) leaves it on for a binary that no
+    // longer exists. Toggling it does nothing then; removing the row and adding it back does.
+    IS_MAC
+      ? 'Tizim sozlamalari → Maxfiylik va xavfsizlik → Maxsus imkoniyatlar’da gapir me yoqilganini ' +
+          'tekshiring. Yoqilgan bo‘lsa ham ishlamasa, uni «−» bilan ro‘yxatdan olib tashlang va «+» ' +
+          'bilan qayta qo‘shing.'
+      : PLATFORM === 'linux'
+        ? 'Wayland sessiyasida tugmalar faqat X11 dasturlarida seziladi. Kirish ekranida ' +
+          '«Xorg» sessiyasini tanlang, yoki belgini bosib gapiring.'
+        : 'Boshqa dastur tugmalarni ushlab turgan bo‘lishi mumkin. Boshqa juftlikni tanlab ko‘ring, ' +
+          'yoki ilovani administrator sifatida ishga tushiring.',
     'warn'
   );
 });
@@ -2418,6 +2663,14 @@ async function start(): Promise<void> {
   settings = await window.api.getSettings();
   account = await window.api.getAccount();
   renderAccount();
+
+  permissions = await window.api.getPermissions();
+  renderPermissions();
+  el<HTMLElement>('helpLogsHint').textContent =
+    `Papkani ochish uchun: ${TRAY_MENU_HINT} → «Loglar papkasi».`;
+  el<HTMLElement>('wDoneLead').textContent =
+    `Ilova ${TRAY_PLACE} belgida va ekran chetidagi kichkina belgida yashaydi. Oynani ` +
+    'yopsangiz ham ishlayveradi.';
 
   const version = `gapir me v${await window.api.getVersion()}`;
   el<HTMLElement>('helpVersion').textContent = version;

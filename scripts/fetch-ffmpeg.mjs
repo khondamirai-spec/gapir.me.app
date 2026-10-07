@@ -1,7 +1,12 @@
 /**
- * Downloads the ffmpeg.exe that gets bundled into the installer.
+ * Puts the ffmpeg that gets bundled into the package in resources/.
  *
  *   node scripts/fetch-ffmpeg.mjs [--force]
+ *
+ * On Windows that is the download below. On macOS and Linux it hands over to
+ * scripts/build-ffmpeg.sh, which builds a small LGPL ffmpeg from pinned source — there is no
+ * pinned, LGPL, microphone-capable binary to download for those, and the reasons are written
+ * at the top of that script.
  *
  * A downloaded app cannot tell its users to `winget install ffmpeg` first, so the binary has
  * to be in the box. It is not committed to the repo — a 100 MB binary in git history is a
@@ -35,6 +40,17 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+if (process.platform !== 'win32') {
+  try {
+    execFileSync('bash', [join(ROOT, 'scripts', 'build-ffmpeg.sh'), ...process.argv.slice(2)], {
+      stdio: 'inherit'
+    });
+    process.exit(0);
+  } catch {
+    process.exit(1);
+  }
+}
 const RESOURCES = join(ROOT, 'resources');
 
 /**

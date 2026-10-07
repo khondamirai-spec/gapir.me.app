@@ -1,6 +1,7 @@
 import { pcmToWav, SAMPLE_RATE, BYTES_PER_SAMPLE } from '../audio';
 import { accessToken, notePlanUsage, refreshToken } from '../auth';
 import { SUPABASE_ANON_KEY, TRANSCRIBE_URL, isConfigured } from '../supabase-config';
+import { toPlanId } from '@shared/types';
 import {
   SttError,
   type SttAdapter,
@@ -62,7 +63,8 @@ interface ProxyResponse {
   error?: string;
   plan?: string;
   used?: number;
-  limit?: number;
+  /** Null on a plan with no weekly cap (Cheksiz). */
+  limit?: number | null;
   resetsAt?: string | null;
 }
 
@@ -137,9 +139,13 @@ class ProxySession implements SttSession {
     // is what keeps the Hisob pane counting up as you speak rather than only on open. Done
     // before the `res.ok` check on purpose: a 402 is precisely the moment the pane most needs
     // to be right, and the server sends the same figures with it.
-    if (body.plan && typeof body.used === 'number' && typeof body.limit === 'number') {
+    if (
+      body.plan &&
+      typeof body.used === 'number' &&
+      (typeof body.limit === 'number' || body.limit === null)
+    ) {
       notePlanUsage({
-        plan: body.plan === 'pro' ? 'pro' : 'free',
+        plan: toPlanId(body.plan),
         wordsUsed: body.used,
         wordLimit: body.limit,
         resetsAt: typeof body.resetsAt === 'string' ? body.resetsAt : null

@@ -1,6 +1,9 @@
 import { EventEmitter } from 'node:events';
-import { uIOhook, UiohookKey } from 'uiohook-napi';
 import { DEFAULT_HOTKEYS, type Chord, type HotkeySettings } from '@shared/hotkeys';
+
+import { loadError, uIOhook, UiohookKey } from './uiohook-loader';
+
+type Hook = NonNullable<typeof uIOhook>;
 
 /**
  * The global dictation shortcuts: hold one chord to talk, press another to toggle.
@@ -126,9 +129,33 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
     this.emitKeys();
   }
 
+  /** Whether the hook is installed and receiving keys. */
+  isRunning(): boolean {
+    return this.started;
+  }
+
+  /**
+   * Install the hook. Throws if the OS refuses — and it is safe to call again after that.
+   *
+   * That second property is new and macOS is why: until the user grants Accessibility,
+   * `uIOhook.start()` throws UIOHOOK_ERROR_AXAPI_DISABLED, and the grant arrives minutes
+   * later from System Settings. So `started` is only set once the native start succeeded,
+   * and the listeners are attached once however many attempts it takes — attaching them per
+   * attempt would deliver every key twice after the first retry.
+   */
   start(): void {
     if (this.started) return;
+    if (!uIOhook) throw new Error(loadError || 'uiohook-napi is unavailable');
+    this.attachListeners(uIOhook);
+    uIOhook.start();
     this.started = true;
+  }
+
+  private listenersAttached = false;
+
+  private attachListeners(uIOhook: Hook): void {
+    if (this.listenersAttached) return;
+    this.listenersAttached = true;
 
     uIOhook.on('keydown', (e) => {
       // Esc aborts the dictation without pasting anything — and that has to keep working
@@ -210,8 +237,6 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
       // Releasing any part of the push-to-talk chord ends the dictation.
       if (this.active && this.chords.pushToTalk.includes(name)) this.endGesture('stop');
     });
-
-    uIOhook.start();
   }
 
   /** Is every key of `chord` down? An empty chord is off, never "trivially satisfied". */
@@ -260,7 +285,7 @@ class Hotkey extends EventEmitter implements HotkeyEvents {
     if (!this.started) return;
     this.started = false;
     try {
-      uIOhook.stop();
+      uIOhook?.stop();
     } catch {
       // Hook already torn down during shutdown — nothing to do.
     }

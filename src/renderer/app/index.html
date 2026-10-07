@@ -241,6 +241,59 @@
         height: 11px;
       }
 
+      /* On a Mac the window keeps the system's traffic lights (see openApp in
+         src/main/index.ts), so our own window buttons go, and the bar leaves the lights
+         their corner. 78px is the lights' own width plus the inset they are drawn at. */
+      .platform-darwin #winControls {
+        display: none;
+      }
+
+      .platform-darwin #titlebar {
+        padding-left: 78px;
+        padding-right: 10px;
+      }
+
+      /* ---------------------------------------------------- permission banner
+         What the OS has not allowed yet, above whatever pane is open. Only ever shown on
+         a Mac (microphone, Accessibility) or a Linux Wayland session; on Windows there is
+         nothing to ask for and the element never leaves `.hidden`. */
+      #permBanner {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-shrink: 0;
+        margin: 0 0 12px;
+        padding: 12px 14px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        background: var(--card);
+      }
+
+      #permBanner .perm-text {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      #permBanner .perm-text span {
+        color: var(--ink-3);
+      }
+
+      .w-perm {
+        margin-bottom: 14px;
+        border-color: var(--line-strong);
+      }
+
+      .w-perm p {
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--ink-2);
+      }
+
       /* ------------------------------------------------------------- shell */
 
       #body {
@@ -390,10 +443,19 @@
       /* --------------------------------------------------------- main pane */
 
       #content {
+        display: flex;
+        flex-direction: column;
         flex: 1;
         min-width: 0;
         padding: 0 18px 18px 4px;
         overflow: hidden;
+      }
+
+      /* A column so the permission banner can sit above the pane and the pane takes the
+         rest, rather than the banner pushing a 100%-tall pane out of the window. */
+      #content > .view {
+        flex: 1;
+        height: auto;
       }
 
       .view {
@@ -2289,17 +2351,18 @@
       }
 
       /* ---- plans ----
-         Two cards side by side, and the free one is drawn as *chosen* rather than as the
+         Three cards side by side, and the free one is drawn as *chosen* rather than as the
          lesser option: the user already has it, and a screen that greys out what somebody
          already owns in order to sell them something else is the kind of thing that gets an
-         installer uninstalled. Pro carries the only button. */
+         installer uninstalled. Only the paid cards carry a button. Three columns at 560px
+         leaves each card ~170px, so they stack once the window is too narrow for that. */
       .w-plans {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 14px;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
       }
 
-      @media (max-width: 560px) {
+      @media (max-width: 620px) {
         .w-plans {
           grid-template-columns: 1fr;
         }
@@ -2309,7 +2372,7 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
-        padding: 16px 18px;
+        padding: 14px;
         border: 1.5px solid var(--line);
         border-radius: 14px;
         background: var(--card);
@@ -2336,14 +2399,16 @@
 
       .w-plan-price {
         display: flex;
+        flex-wrap: wrap;
         align-items: baseline;
         gap: 5px;
       }
 
+      /* 22px rather than 26: "199 000 so‘m" has to fit a third of the setup column. */
       .w-plan-price b {
         font-family: var(--font-display);
-        font-size: 26px;
-        line-height: 1;
+        font-size: 22px;
+        line-height: 1.1;
       }
 
       .w-plan-price span {
@@ -2366,9 +2431,10 @@
         color: var(--ink);
       }
 
+      /* Pushed to the bottom so the two buttons line up whatever the lists above them hold. */
       .w-plan .btn {
         align-self: flex-start;
-        margin-top: 2px;
+        margin-top: auto;
       }
 
       /* ---- language ---- */
@@ -2710,6 +2776,13 @@
 
       <!-- ============================== content ============================== -->
       <main id="content">
+        <div id="permBanner" class="hidden" role="status">
+          <div class="perm-text">
+            <b id="permTitle"></b>
+            <span id="permBody"></span>
+          </div>
+          <button class="btn small" id="permAction"></button>
+        </div>
         <!-- ---------------------------- dictation ---------------------------- -->
         <section class="view" data-view="dictation">
           <div class="view-head">
@@ -3050,6 +3123,7 @@
                 <p class="hint" id="accExpires" style="margin: 0"></p>
                 <div class="acc-actions">
                   <button class="btn" id="accUpgrade">Pro’ga o‘tish</button>
+                  <button class="btn" id="accUpgradeUnlimited">Cheksiz’ga o‘tish</button>
                   <button class="btn ghost small" id="accRefresh">Yangilash</button>
                   <button class="btn ghost small" id="accSignOut">Chiqish</button>
                 </div>
@@ -3095,9 +3169,10 @@
                 <b>«Haftalik limit tugadi» deb yozdi</b>
                 <p>
                   Limit aytilgan so‘z bilan o‘lchanadi: bepul rejada haftasiga 1000 so‘z,
-                  Pro’da 6000. Qancha ishlatganingiz «Hisob» va «Statistika» bo‘limlarida
-                  ko‘rinadi. Har dushanba yarim tunda yangilanadi — hech narsa qilmasdan yana
-                  ishlaydi. Ertaroq kerak bo‘lsa, Pro’ga o‘tish mumkin.
+                  Pro’da 6000, Cheksiz tarifda esa limit yo‘q. Qancha ishlatganingiz «Hisob»
+                  va «Statistika» bo‘limlarida ko‘rinadi. Har dushanba yarim tunda
+                  yangilanadi — hech narsa qilmasdan yana ishlaydi. Ertaroq kerak bo‘lsa, Pro
+                  yoki Cheksiz tarifga o‘tish mumkin.
                 </p>
               </div>
               <div class="help-item">
@@ -3109,7 +3184,7 @@
                 <button class="btn ghost small" id="openLogs" style="margin-top: 10px">
                   Manzilni nusxalash
                 </button>
-                <p class="hint">
+                <p class="hint" id="helpLogsHint">
                   Papkani ochish uchun: trayda gapir me belgisiga o‘ng tugma → «Loglar papkasi».
                 </p>
               </div>
@@ -3247,13 +3322,27 @@
                   <b>Pro</b>
                   <span class="badge new">6x ko‘p</span>
                 </div>
-                <div class="w-plan-price"><b id="wProPrice">—</b><span>/ oy</span></div>
+                <div class="w-plan-price"><b id="wProPrice">—</b><span>so‘m / oy</span></div>
                 <ul>
                   <li><b>6 000</b> so‘z / hafta</li>
                   <li>Kuniga taxminan 15–20 sahifa</li>
                   <li>Tezroq navbat, bir xil sifat</li>
                 </ul>
                 <button class="btn small" id="wUpgrade">Pro’ga o‘tish</button>
+              </div>
+
+              <div class="w-plan pro">
+                <div class="w-plan-head">
+                  <b>Cheksiz</b>
+                  <span class="badge new">Limitsiz</span>
+                </div>
+                <div class="w-plan-price"><b id="wUnlimitedPrice">—</b><span>so‘m / oy</span></div>
+                <ul>
+                  <li><b>Cheklovsiz</b> so‘z</li>
+                  <li>Har kuni ko‘p yozadiganlar uchun</li>
+                  <li>Pro’dagi hamma narsa</li>
+                </ul>
+                <button class="btn small" id="wUpgradeUnlimited">Cheksiz’ga o‘tish</button>
               </div>
             </div>
 
@@ -3271,6 +3360,19 @@
               Noutbukning o‘z mikrofoni yoki simli naushnik eng ishonchli. Bluetooth
               qurilmalar ba’zan uzilib qoladi.
             </p>
+
+            <!-- macOS only: shown until the system has said yes to the microphone. -->
+            <div class="w-card w-perm hidden" id="wMicPerm">
+              <h3>Mikrofonga ruxsat bering</h3>
+              <p>
+                macOS har bir dasturdan mikrofon uchun ruxsat so‘raydi. Tugmani bosing va
+                chiqqan oynada «Ruxsat berish»ni tanlang.
+              </p>
+              <div class="w-actions">
+                <span class="grow"></span>
+                <button class="btn" id="wMicPermBtn">Ruxsat berish</button>
+              </div>
+            </div>
 
             <div class="w-card">
               <h3>Gapiring — chiziqlar qimirlayaptimi?</h3>
@@ -3318,6 +3420,17 @@
             <h2>Tugmalarni sinab ko‘ring</h2>
             <p class="lead" id="wKeysLead"></p>
 
+            <!-- macOS: Accessibility, without which the hotkey and the paste both do nothing.
+                 Linux: a Wayland session, where both reach X11 apps only. -->
+            <div class="w-card w-perm hidden" id="wKeysPerm">
+              <h3 id="wKeysPermTitle"></h3>
+              <p id="wKeysPermBody"></p>
+              <div class="w-actions">
+                <span class="grow"></span>
+                <button class="btn" id="wKeysPermBtn">Ruxsat berish</button>
+              </div>
+            </div>
+
             <div class="w-card">
               <h3>Ikkalasini birga bosing — tugmalar bo‘yaladimi?</h3>
               <div class="w-keys" id="wKeys"></div>
@@ -3350,7 +3463,7 @@
           <!-- ------------------------------ 6. tayyor ------------------------------ -->
           <div class="w-step" data-step="6">
             <h2>Tayyor</h2>
-            <p class="lead">
+            <p class="lead" id="wDoneLead">
               Ilova traydagi belgida va ekran chetidagi kichkina belgida yashaydi. Oynani
               yopsangiz ham ishlayveradi.
             </p>

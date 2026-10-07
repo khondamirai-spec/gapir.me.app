@@ -186,7 +186,9 @@ Deno.serve(async (req) => {
   const quota = {
     plan: String(res.plan ?? 'free'),
     used: Number(res.used ?? 0),
-    limit: Number(res.limit ?? 0),
+    // null is a plan with no weekly cap, and it stays null on the way out: turning it into 0
+    // would tell the app "nothing left" about the one user who can dictate the most.
+    limit: res.limit === null ? null : Number(res.limit ?? 0),
     resetsAt: typeof res.resets_at === 'string' ? res.resets_at : null
   };
 
@@ -203,7 +205,7 @@ Deno.serve(async (req) => {
     // The limit is quoted rather than described. "Haftalik limit tugadi" leaves the user
     // wondering what the limit was; `1000 so'z` is a number they can weigh against 50 000
     // so'm without opening another screen.
-    return fail(402, quota.plan === 'pro'
+    return fail(402, quota.plan !== 'free'
       ? `Bu haftalik limit tugadi (${quota.limit} so‘z) — dushanbadan yana ishlaydi`
       : `Bu haftalik bepul limit tugadi (${quota.limit} so‘z) — Pro’ga o‘ting yoki dushanbagacha kuting`,
       quota);
@@ -299,7 +301,7 @@ Deno.serve(async (req) => {
   console.log(
     `[transcribe] user=${user.id} plan=${plan} model=${MODEL} ` +
       `audio=${((body.audioMs ?? 0) / 1000).toFixed(1)}s rtt=${Date.now() - startedAt}ms ` +
-      `chars=${text.length} words=${words} week=${quota.used + words}/${quota.limit}`
+      `chars=${text.length} words=${words} week=${quota.used + words}/${quota.limit ?? '∞'}`
   );
 
   // `used` counts this dictation, which the reservation could not: the quota is spent by the

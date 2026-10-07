@@ -8,9 +8,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  */
 const listeners = new Map<string, ((e: { keycode: number }) => void)[]>();
 
-vi.mock('uiohook-napi', async () => {
+vi.mock('./uiohook-loader', async () => {
   const actual = await vi.importActual<typeof import('uiohook-napi')>('uiohook-napi');
   return {
+    loadError: '',
     UiohookKey: actual.UiohookKey,
     uIOhook: {
       on(event: string, cb: (e: { keycode: number }) => void) {

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import Store from 'electron-store';
 import { app } from 'electron';
 import { sanitizeHotkeys, type HotkeySettings } from '@shared/hotkeys';
+import { setAutostartEntry } from './linux-desktop';
 import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_SETTINGS,
@@ -192,8 +193,24 @@ export function setSettings(patch: Partial<Settings>): void {
   if (patch.onboarded !== undefined) store.set('onboarded', patch.onboarded);
   if (patch.launchAtLogin !== undefined) {
     store.set('launchAtLogin', patch.launchAtLogin);
-    app.setLoginItemSettings({ openAtLogin: patch.launchAtLogin, args: ['--hidden'] });
+    applyLaunchAtLogin(patch.launchAtLogin);
   }
+}
+
+/**
+ * Make the OS agree with the `launchAtLogin` setting.
+ *
+ * Electron covers Windows and macOS; on Linux `setLoginItemSettings` silently does nothing,
+ * so the setting would save, read back as on, and never start the app. Also called at
+ * startup on Linux, because an AppImage that moved has an autostart entry pointing at the
+ * place it used to be.
+ */
+export function applyLaunchAtLogin(enabled: boolean): void {
+  if (process.platform === 'linux') {
+    setAutostartEntry(enabled);
+    return;
+  }
+  app.setLoginItemSettings({ openAtLogin: enabled, args: ['--hidden'] });
 }
 
 /**
@@ -216,6 +233,17 @@ export function geminiModel(): string {
  */
 export function geminiRealtimeEnabled(): boolean {
   return process.env.GAPIR_ME_GEMINI_REALTIME === '1';
+}
+
+/**
+ * Transcribe a dictation in pieces while it is being spoken, rather than as one clip after
+ * release — see src/main/stt/chunked.ts.
+ *
+ * On by default; `GAPIR_ME_CHUNKED=0` turns it off so the two can be compared side by side
+ * in development. A packaged build reads no environment and always chunks.
+ */
+export function chunkedTranscriptionEnabled(): boolean {
+  return process.env.GAPIR_ME_CHUNKED !== '0';
 }
 
 /**

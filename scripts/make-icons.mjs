@@ -7,6 +7,9 @@
  *
  *   resources/icon.png            256x256  the mark on a cream tile — window, taskbar, installer
  *   resources/tray.png             32x32   the mark in white — the tray, on a dark taskbar
+ *   resources/icon-mac.png      1024x1024  the tile with Apple's margin — the .icns, the Dock
+ *   resources/icon-linux.png     512x512   the tile — the Linux app menu
+ *   resources/trayTemplate.png     16x16   black template image — the macOS menu bar (+ @2x)
  *   src/renderer/assets/logo.png    720w   trimmed, ink on transparent — both renderers
  *   docs/logo.png                   720w   the same file for the download page
  *
@@ -253,16 +256,26 @@ function drawMark(rgba, dstW, dstH, { mark, scale, tint }) {
   }
 }
 
-/** A square icon: the mark spanning `fill` of the width, over an optional rounded tile. */
-function squareIcon(size, { fill, tile, tint }) {
+/**
+ * A square icon: the mark spanning `fill` of the tile, over an optional rounded tile.
+ *
+ * `inset` leaves transparent margin round the tile, as a fraction of the canvas per side.
+ * Windows draws an icon edge to edge; macOS expects the tile to sit inside its canvas
+ * (Apple's grid puts an 824px tile on a 1024px canvas), and an icon drawn to the edges looks
+ * a size too big beside every other app in the Dock.
+ */
+function squareIcon(size, { fill, tile, tint, inset = 0 }) {
   const mark = loadMark();
   const rgba = new Uint8Array(size * size * 4);
+  const inner = size * (1 - 2 * inset);
 
   if (tile) {
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        const d = roundedSquareDist((x + 0.5) / size, (y + 0.5) / size, 0.5, 0.22);
-        const cov = Math.max(0, Math.min(1, 0.5 - d * size)); // ~1px of anti-aliasing
+        const u = (x + 0.5 - size * inset) / inner;
+        const v = (y + 0.5 - size * inset) / inner;
+        const d = roundedSquareDist(u, v, 0.5, 0.22);
+        const cov = Math.max(0, Math.min(1, 0.5 - d * inner)); // ~1px of anti-aliasing
         if (cov <= 0) continue;
         const i = (y * size + x) * 4;
         [rgba[i], rgba[i + 1], rgba[i + 2]] = tile;
@@ -271,7 +284,7 @@ function squareIcon(size, { fill, tile, tint }) {
     }
   }
 
-  drawMark(rgba, size, size, { mark, scale: (size * fill) / mark.width, tint });
+  drawMark(rgba, size, size, { mark, scale: (inner * fill) / mark.width, tint });
   return encodePng(rgba, size, size);
 }
 
@@ -297,6 +310,24 @@ console.log('wrote resources/icon.png (256x256)');
 // on and every pixel of the 32 is worth having.
 writeFileSync(join(OUT_DIR, 'tray.png'), squareIcon(32, { fill: 0.94, tint: [255, 255, 255] }));
 console.log('wrote resources/tray.png (32x32)');
+
+// macOS and Linux. electron-builder refuses to make an .icns from anything under 512px, and
+// a Retina Dock draws the icon at up to 1024. Same tile, with Apple's margin round it.
+writeFileSync(
+  join(OUT_DIR, 'icon-mac.png'),
+  squareIcon(1024, { fill: 0.82, tile: CREAM, inset: 0.098 })
+);
+console.log('wrote resources/icon-mac.png (1024x1024)');
+writeFileSync(join(OUT_DIR, 'icon-linux.png'), squareIcon(512, { fill: 0.82, tile: CREAM }));
+console.log('wrote resources/icon-linux.png (512x512)');
+
+// The macOS menu bar takes a *template* image: black plus alpha, which the system recolours
+// for light and dark menu bars and for the highlighted state. A coloured or white icon there
+// is the one thing in the bar that does not follow the theme. The "Template" suffix in the
+// name is what tells macOS to treat it that way, and @2x is picked up for Retina by name.
+writeFileSync(join(OUT_DIR, 'trayTemplate.png'), squareIcon(16, { fill: 1, tint: [0, 0, 0] }));
+writeFileSync(join(OUT_DIR, 'trayTemplate@2x.png'), squareIcon(32, { fill: 1, tint: [0, 0, 0] }));
+console.log('wrote resources/trayTemplate.png (16x16) and @2x (32x32)');
 
 // 720px wide so the sidebar's 44px copy stays sharp at 200% display scaling.
 const trimmed = trimmedMark(720);

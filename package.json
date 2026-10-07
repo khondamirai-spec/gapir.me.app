@@ -7,6 +7,8 @@
   "license": "MIT",
   "private": true,
   "repository": "github:khondamirai-spec/gapir.me.app",
+  "homepage": "https://www.gapir.me",
+  "desktopName": "gapir-me.desktop",
   "engines": {
     "node": ">=22"
   },
@@ -17,9 +19,12 @@
     "start": "electron-vite preview",
     "ffmpeg": "node scripts/fetch-ffmpeg.mjs",
     "predist": "npm run ffmpeg",
-    "dist": "npm run build && electron-builder --win --publish never",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:win": "npm run ffmpeg && npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run ffmpeg && npm run build && electron-builder --mac --publish never",
+    "dist:linux": "npm run ffmpeg && npm run build && electron-builder --linux --publish never",
     "prerelease": "npm run ffmpeg",
-    "release": "npm run build && electron-builder --win --publish always",
+    "release": "npm run build && electron-builder --publish always",
     "spike": "node scripts/spike-gemini.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

@@ -2,10 +2,17 @@ name: Release
 
 # Tag a commit to ship it:
 #
-#   npm version 0.2.1 && git push --follow-tags
+#   npm version patch && git push --follow-tags
 #
-# That builds the installer, uploads it to a GitHub Release along with the latest.yml that
-# electron-updater reads, and every already-installed copy picks the update up within hours.
+# Builds the Windows installer, the macOS dmg and the Linux AppImage/deb, then publishes all of
+# them in ONE GitHub Release together with the latest*.yml files electron-updater reads — and
+# every already-installed copy picks the update up within hours.
+#
+# Why the builds do not publish themselves: three jobs racing to create the same release is
+# how you get duplicate or half-filled releases, and a release missing its Mac file is a
+# download page that 404s for Mac users while the workflow shows green. So each platform only
+# builds and uploads an artifact, and the last job publishes the release once, with every file
+# in it, only if all three builds succeeded. A release nobody can download is not a release.
 on:
   push:
     tags: ['v*']
@@ -16,15 +23,12 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - run: npm ci
 
       # A release that fails its own tests is a release nobody should be able to download.
@@ -35,15 +39,130 @@ jobs:
       - name: Fetch ffmpeg
         run: npm run ffmpeg
 
-      - name: Build and publish
-        run: npm run release
-        env:
-          # Provided by Actions; electron-builder infers owner/repo from the git remote.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build installer
+        run: npx electron-vite build && npx electron-builder --win --publish never
 
-      # Kept for 7 days so a bad release can be inspected without re-running the build.
       - uses: actions/upload-artifact@v4
         with:
-          name: gapir-me-Setup
-          path: release/gapir-me-Setup.exe
+          name: release-windows
+          path: |
+            release/gapir-me-Setup.exe
+            release/gapir-me-Setup.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
           retention-days: 7
+
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # A universal (arm64 + x86_64) ffmpeg built from pinned source, a minute or so. Cached
+      # on the script's hash, which holds the version and the configure flags.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            resources/ffmpeg
+            resources/ffmpeg-LICENSE.txt
+          key: ffmpeg-mac-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+      - name: Build ffmpeg
+        run: bash scripts/build-ffmpeg.sh
+
+      # With no certificate configured these are empty and electron-builder ad-hoc signs, which
+      # is what ships today. Add the secrets and the same step signs with the Developer ID and
+      # notarizes — see the mac section of electron-builder.yml.
+      - name: Build dmg
+        run: npx electron-vite build && npx electron-builder --mac --publish never
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-mac
+          path: |
+            release/gapir-me-mac.dmg
+            release/gapir-me-mac.dmg.blockmap
+            release/gapir-me-mac.zip
+            release/gapir-me-mac.zip.blockmap
+            release/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    # 22.04 rather than latest only for the app build's toolchain; the ffmpeg below is built
+    # in Debian 11 regardless, so its glibc floor (2.31) stays below Electron's own.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The keyboard hook's native module links these, and the hotkey tests load it.
+      - name: System libraries
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libxtst6 libxt6 libxrandr2
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            resources/ffmpeg
+            resources/ffmpeg-LICENSE.txt
+          key: ffmpeg-linux-x64-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+      - name: Build ffmpeg (Debian 11)
+        run: |
+          if [ ! -f resources/ffmpeg ]; then
+            docker run --rm -v "$PWD":/w -w /w debian:bullseye bash -c "
+              apt-get update -qq &&
+              apt-get install -y -qq build-essential pkg-config libasound2-dev curl xz-utils ca-certificates >/dev/null &&
+              bash scripts/build-ffmpeg.sh &&
+              chown -R $(id -u):$(id -g) resources"
+          fi
+
+      - name: Build AppImage and deb
+        run: npx electron-vite build && npx electron-builder --linux --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            release/gapir-me-linux-x86_64.AppImage
+            release/gapir-me-linux-amd64.deb
+            release/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [windows, mac, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - run: ls -la dist
+
+      # Published, not a draft: a draft is invisible to /releases/latest, so the download links
+      # 404 and electron-updater finds nothing — while this job reports success. That cost
+      # v0.2.1 through v0.2.3 once already.
+      - name: Publish release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

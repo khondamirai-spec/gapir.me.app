@@ -386,6 +386,13 @@ function activeDisplay(): Display {
   return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
 }
 
+/** See the `type` option in createOverlay. */
+function overlayWindowType(): 'toolbar' | 'panel' | undefined {
+  if (process.platform === 'win32') return 'toolbar';
+  if (process.platform === 'darwin') return 'panel';
+  return undefined;
+}
+
 export function createOverlay(): BrowserWindow {
   win = new BrowserWindow({
     width: WIDTH,
@@ -402,8 +409,12 @@ export function createOverlay(): BrowserWindow {
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: false,
-    // Keep it off Alt-Tab and out of screen captures of other apps.
-    type: process.platform === 'win32' ? 'toolbar' : undefined,
+    // Keep it off Alt-Tab and out of screen captures of other apps. On macOS a `panel` is
+    // an NSPanel, which is what makes the click on the pill safe there: clicking an ordinary
+    // window activates its app and moves the caret out of whatever the user is dictating
+    // into, and a non-activating panel is the one kind of window that does not. It also
+    // floats over full-screen apps, which a normal always-on-top window cannot.
+    type: overlayWindowType(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -413,7 +424,11 @@ export function createOverlay(): BrowserWindow {
 
   // 'screen-saver' floats above fullscreen apps and most other always-on-top windows.
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // `skipTransformProcessType`: on macOS this call otherwise flips the whole app between
+  // agent and regular process to get the window onto full-screen Spaces — which shows and
+  // hides the Dock icon behind index.ts's back. The app is already an agent (LSUIElement),
+  // so the transform buys nothing.
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   win.setIgnoreMouseEvents(true, { forward: false });
 
   positionOn(screen.getPrimaryDisplay());

@@ -50,7 +50,9 @@ function ensureWindow(): BrowserWindow {
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: false,
-    type: process.platform === 'win32' ? 'toolbar' : undefined,
+    // Same choice as the pill's window (see createOverlay in overlay.ts), spelled out here
+    // because importing it back from overlay.ts would make the two modules a cycle.
+    type: process.platform === 'win32' ? 'toolbar' : process.platform === 'darwin' ? 'panel' : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -59,7 +61,7 @@ function ensureWindow(): BrowserWindow {
   });
 
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   // Unconditional, unlike the pill's: this window is the size of a display.
   win.setIgnoreMouseEvents(true, { forward: false });
 

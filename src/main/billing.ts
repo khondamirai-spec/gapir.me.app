@@ -1,4 +1,5 @@
 import { shell } from 'electron';
+import type { PaidPlan } from '@shared/types';
 import { accessToken } from './auth';
 import { SUPABASE_ANON_KEY, SUPABASE_URL, isConfigured } from './supabase-config';
 
@@ -32,8 +33,12 @@ interface CheckoutResponse {
  *
  * Resolves with '' on success, or an Uzbek message to show the user. The server writes those
  * messages, so a new failure mode is explained properly without a client release.
+ *
+ * The plan is named, the price is not: the checkout function looks the amount up in
+ * `plan_limits` for whichever plan this is, so naming one buys exactly that plan at exactly
+ * its price.
  */
-export async function openCheckout(): Promise<string> {
+export async function openCheckout(plan: PaidPlan): Promise<string> {
   if (!isConfigured()) return 'Ilova serverga ulanmagan — ilovani yangilang';
 
   const token = await accessToken();
@@ -51,7 +56,7 @@ export async function openCheckout(): Promise<string> {
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${token}`
       },
-      body: '{}',
+      body: JSON.stringify({ plan }),
       signal: controller.signal
     });
     body = (await res.json()) as CheckoutResponse;

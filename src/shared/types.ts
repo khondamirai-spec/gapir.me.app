@@ -71,11 +71,34 @@ export interface AudioDevice {
   /** Friendly name shown in settings, e.g. "Микрофон (DroidCam Audio)". */
   label: string;
   /**
-   * ffmpeg dshow alternative name, e.g. "@device_cm_{...}\\wave_{...}".
-   * Always ASCII — we pass THIS to ffmpeg, never `label`, because friendly names
-   * contain non-ASCII characters that get mangled by the Windows console codepage.
+   * What ffmpeg is given to open the device — see `listDevices` in src/main/audio.ts.
+   *
+   * On Windows the dshow alternative name, e.g. "@device_cm_{...}\\wave_{...}": always
+   * ASCII, and we pass THIS to ffmpeg, never `label`, because friendly names contain
+   * non-ASCII characters that get mangled by the Windows console codepage. On macOS the
+   * AVFoundation device name; on Linux the ALSA PCM name.
    */
   id: string;
+}
+
+/** The OS's answer about the microphone. Always 'granted' where the OS never asks. */
+export type MicPermission = 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown';
+
+/**
+ * Everything the OS has to allow before a dictation can work, for the app window to show.
+ *
+ * Only macOS asks for anything (see src/main/permissions.ts), so on Windows this is always
+ * all-clear and the window draws nothing for it. Linux asks for nothing but has `wayland`.
+ */
+export interface PermissionsState {
+  platform: 'win32' | 'darwin' | 'linux';
+  microphone: MicPermission;
+  /** May watch the keyboard and synthesise the paste. macOS's Accessibility switch. */
+  accessibility: boolean;
+  /** Is the global keyboard hook actually running? False while it waits for the above. */
+  hotkeyActive: boolean;
+  /** A Wayland session, where the hotkey and the paste only reach X11 apps. */
+  wayland: boolean;
 }
 
 /**
@@ -209,12 +232,31 @@ export interface AuthUser {
  * was. See supabase/migrations/20260820101217_weekly_word_quota.sql for why words, and why a
  * week.
  */
+/**
+ * The plans `plan_limits` holds. `unlimited` (Cheksiz) has no weekly word cap — its
+ * `weekly_word_limit` is NULL — but the per-minute and clip-length caps still apply.
+ */
+export type PlanId = 'free' | 'pro' | 'unlimited';
+
+/** What can be bought. The checkout Edge Function accepts exactly these. */
+export type PaidPlan = Exclude<PlanId, 'free'>;
+
+export const PAID_PLANS: readonly PaidPlan[] = ['pro', 'unlimited'];
+
+/** Anything the server sends that is not a plan we know is read as free, never as paid. */
+export function toPlanId(raw: unknown): PlanId {
+  return raw === 'pro' || raw === 'unlimited' ? raw : 'free';
+}
+
 export interface PlanSnapshot {
-  plan: 'free' | 'pro';
+  plan: PlanId;
   /** Words transcribed so far this week. */
   wordsUsed: number;
-  /** Words allowed per week on this plan. */
-  wordLimit: number;
+  /**
+   * Words allowed per week on this plan. **Null means no weekly cap** (Cheksiz) — kept
+   * distinct from 0, which would draw the one user who can dictate the most as "nothing left".
+   */
+  wordLimit: number | null;
   /**
    * When the weekly allowance resets — Monday 00:00 in Tashkent — as an ISO string.
    *
@@ -223,10 +265,13 @@ export interface PlanSnapshot {
    * limit for anyone whose machine clock or timezone is off, and would do it silently.
    */
   resetsAt: string | null;
-  /** When Pro runs out, as an ISO string. Null on free. */
+  /** When the paid plan runs out, as an ISO string. Null on free. */
   expiresAt: string | null;
-  /** Monthly price of Pro in tiyin — read from the server so the UI can't quote a stale one. */
-  priceTiyin: number;
+  /**
+   * Monthly price of each paid plan in tiyin — read from the server so the UI can't quote a
+   * stale one. 0 until the snapshot lands, which the UI draws as an em dash.
+   */
+  prices: Record<PaidPlan, number>;
 }
 
 /**
@@ -299,6 +344,11 @@ export interface UpdateStatus {
   /** 0..100 while downloading. */
   percent?: number;
   message?: string;
+  /**
+   * The update cannot be installed in place and has to be downloaded from the website —
+   * an unsigned macOS build, which Squirrel.Mac refuses to update. See src/main/updater.ts.
+   */
+  manual?: boolean;
 }
 
 /** IPC channel names, centralised so main and renderer can't drift apart. */
@@ -397,6 +447,14 @@ export const IPC = {
   authChanged: 'auth:changed',
   /** Opens the Payme checkout page in the system browser. */
   billingCheckout: 'billing:checkout',
+  /** ---- OS permissions (macOS) ----
+   *  `permissionsRequest` asks for one — the system prompt the first time, System Settings
+   *  after a refusal, because macOS never shows the prompt twice. The answer arrives on
+   *  `permissionsChanged`, which main also sends when the Accessibility poll sees the switch
+   *  flip, since the user flips it in another app. */
+  permissionsGet: 'permissions:get',
+  permissionsRequest: 'permissions:request',
+  permissionsChanged: 'permissions:changed',
   /** Misc. */
   appVersion: 'app:version',
   openExternal: 'app:open-external'
