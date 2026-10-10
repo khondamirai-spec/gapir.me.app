@@ -78,8 +78,18 @@ jobs:
       # With no certificate configured these are empty and electron-builder ad-hoc signs, which
       # is what ships today. Add the secrets and the same step signs with the Developer ID and
       # notarizes — see the mac section of electron-builder.yml.
+      #
+      # A secret that is not configured arrives as an empty string, not as an unset variable,
+      # and electron-builder reads an empty CSC_LINK as a path — the working directory — and
+      # dies with "<repo> not a file" right after the ad-hoc sign. That failed v0.3.1, the first
+      # tag to build a Mac at all. So every empty one is unset before electron-builder runs.
       - name: Build dmg
-        run: npx electron-vite build && npx electron-builder --mac --publish never
+        run: |
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then unset "$v"; fi
+          done
+          npx electron-vite build && npx electron-builder --mac --publish never
+        shell: bash
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
@@ -124,10 +134,22 @@ jobs:
             resources/ffmpeg
             resources/ffmpeg-LICENSE.txt
           key: ffmpeg-linux-x64-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+      # Debian 11 is end-of-life and its packages have moved to archive.debian.org — the image's
+      # own sources still list deb.debian.org, whose indexes name security updates that are no
+      # longer in its pool, so every install 404s (that failed v0.3.1). Pointing all three
+      # suites at the archive is the permanent home; the archive's Release files carry no
+      # expiry today, and Check-Valid-Until=false keeps it that way if one is ever added.
       - name: Build ffmpeg (Debian 11)
         run: |
           if [ ! -f resources/ffmpeg ]; then
             docker run --rm -v "$PWD":/w -w /w debian:bullseye bash -c "
+              printf '%s\n' \
+                'deb http://archive.debian.org/debian bullseye main' \
+                'deb http://archive.debian.org/debian bullseye-updates main' \
+                'deb http://archive.debian.org/debian-security bullseye-security main' \
+                > /etc/apt/sources.list &&
+              rm -f /etc/apt/sources.list.d/* &&
+              echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99archive &&
               apt-get update -qq &&
               apt-get install -y -qq build-essential pkg-config libasound2-dev curl xz-utils ca-certificates >/dev/null &&
               bash scripts/build-ffmpeg.sh &&

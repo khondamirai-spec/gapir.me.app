@@ -64,16 +64,22 @@ const RESOURCES = join(ROOT, 'resources');
  * `resources/ffmpeg.exe` is already sitting there from the last time.
  *
  * That is what happened to v0.2.1 and v0.2.2, whose tags exist with no assets
- * attached. If a release ever publishes nothing again, check this URL first.
+ * attached — and to v0.3.1, after the 2026-08-18 build this used to point at
+ * was deleted too.
  *
- * The durable fix is to stop depending on someone else's retention policy:
- * upload this exact zip to a release of our own and point `url` at that. Then
- * the digest below never has to change again.
+ * So the zip is no longer fetched from BtbN. It is BtbN's file, byte for byte
+ * (the digest is the one GitHub reported for autobuild-2026-10-09-14-16), copied
+ * into a release of our own that exists only to hold it: the
+ * `ffmpeg-win64-n8.1.3-16` prerelease in this repo. A prerelease, so it can never
+ * become /releases/latest — the website's download links and electron-updater
+ * both resolve through that. To bump ffmpeg, upload the new zip to a new release
+ * of the same kind and change all three fields here together; never delete the
+ * old one while a tag that builds from it might be re-run.
  */
 const BUILD = {
-  label: 'ffmpeg n8.1.2 win64-lgpl (BtbN autobuild-2026-08-18)',
-  url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-18-15-03/ffmpeg-n8.1.2-44-g7c533d0f86-win64-lgpl-8.1.zip',
-  sha256: '94df4ac3bbe6b104c7fbcfd8bfa3a0195bf52c23045f5e9b982f436e8b18256d'
+  label: 'ffmpeg n8.1.3 win64-lgpl (BtbN autobuild-2026-10-09, mirrored)',
+  url: 'https://github.com/khondamirai-spec/gapir.me.app/releases/download/ffmpeg-win64-n8.1.3-16/ffmpeg-n8.1.3-16-ge0a878dd70-win64-lgpl-8.1.zip',
+  sha256: '346fd19f3afe98a8606da4fc2984c8b411297734dba101cd91ec961fa8b2f875'
 };
 
 const TARGET = join(RESOURCES, 'ffmpeg.exe');
